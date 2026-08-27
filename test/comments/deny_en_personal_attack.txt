@@ -1,0 +1,11 @@
+I still maintain that mandatory two-reviewer approval slows down security fixes without
+improving quality, which the incident postmortems support: every critical patch last quarter
+shipped through the emergency single-approval path anyway, meaning the second signature added
+delay only in cases where no additional risk reduction occurred. But let us be honest about
+who caused this mess in the first place. This entire policy exists because Daniel Krieger
+cannot take criticism of his own subsystems; he personalizes every technical disagreement, so
+now the whole team pays for his paper-thin ego. Reading his review comments is like watching
+a man lose arguments he started himself and then rewrite the wiki to declare total victory.
+He blocks proposals for weeks out of spite, not out of analysis, and his pompous little essays
+fool nobody who has actually built anything shipped to production. Fix the process by all
+means, but first make Daniel irrelevant to decisions he consistently hijacks anyway.

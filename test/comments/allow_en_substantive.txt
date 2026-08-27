@@ -1,0 +1,13 @@
+The proposal to replace chronological feeds with engagement-ranked algorithms is a mistake
+because it optimizes for time-on-site rather than information quality, and we can see why
+through three concrete mechanisms rather than appeals to intuition. First, engagement ranking
+amplifies whatever provokes reaction, and provocation correlates weakly with accuracy: a
+correction of last week's rumor rarely outperforms the rumor itself in click-through, so the
+ranking structurally buries the people doing unpaid fact-checking work. Second, it creates
+incentive distortion on the authoring side. When visibility depends on predicted reaction
+instead of subscriber choice, authors rationally shift from careful analysis toward outrage
+framing, and my own observation across three hobby forums that adopted ranking confirms the
+drift: long technical threads thinned within months while screenshot-and-react posts
+multiplied. Third, subscriber control already exists and works - mailing lists remain
+readable precisely because the user, not a model, decides what arrives. The better path is
+opt-in boosts plus transparent ranking labels so readers can audit what they are shown.
