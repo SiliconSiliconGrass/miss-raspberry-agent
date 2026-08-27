@@ -554,6 +554,23 @@ Do not encode internal Go/Eino implementation details into URLs.
 
 Tests should focus first on project-owned behavior rather than Eino internals.
 
+Tests live in standalone directories under `test/`, not next to the implementation:
+
+```text
+test/
+└── agent/
+    ├── comment_moderator_test.go
+    └── count_words_test.go
+```
+
+Rules for this layout:
+
+- One directory per tested package, mirroring its name (`internal/agent` → `test/agent`).
+- Test files declare an external `<package>_test` package (for example `package agent_test`).
+- Tests exercise behavior through exported APIs only; do not rely on unexported identifiers. Export a small seam (such as `ValidateComment`) when a structural rule needs direct coverage.
+- Fakes implementing Eino interfaces (e.g. `model.BaseChatModel`) are defined inside `test/`.
+- Keep `_test.go` files out of `cmd/` and `internal/`.
+
 Prioritize:
 
 1. Agent construction succeeds with valid dependencies.
@@ -620,6 +637,8 @@ Examples include:
 - External-service credentials.
 
 Prefer environment-based configuration for deployment.
+
+A checked-in `.env.example` documents every required environment variable; keep it current when configuration changes. Real secrets go into an uncommitted `.env` file.
 
 A future config type may contain:
 
