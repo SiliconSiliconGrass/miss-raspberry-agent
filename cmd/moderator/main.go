@@ -48,7 +48,17 @@ func run() error {
 		return fmt.Errorf("construct chat model: %w", err)
 	}
 
-	verdict, err := agent.NewModerator(chatModel).Run(ctx, comment)
+	registry, err := agent.NewRegistry(chatModel)
+	if err != nil {
+		return fmt.Errorf("build agents: %w", err)
+	}
+
+	mod, err := registry.Get(agent.RoleCommentModerator)
+	if err != nil {
+		return err
+	}
+
+	verdict, err := mod.Run(ctx, comment)
 	if err != nil {
 		return err
 	}
