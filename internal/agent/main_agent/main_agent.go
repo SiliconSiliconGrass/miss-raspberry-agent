@@ -17,7 +17,10 @@ import (
 	"github.com/wdvxdr1123/ZeroBot/message"
 
 	"miss-raspberry-agent/internal/napcat"
+	"miss-raspberry-agent/internal/scheduler"
+	"miss-raspberry-agent/internal/tools/current_time"
 	"miss-raspberry-agent/internal/tools/qq_message"
+	"miss-raspberry-agent/internal/tools/schedule_task"
 	"miss-raspberry-agent/internal/tools/todo_list"
 )
 
@@ -37,16 +40,25 @@ const (
 type MainAgent struct {
 	client *napcat.NapcatClient
 	todo   *todo_list.Store
+	sched  *scheduler.Scheduler
 	runner *adk.Runner
 
 	historyMu sync.Mutex
 	history   []*schema.Message
+
+	sourceMu sync.Mutex
+	source   scheduler.Source
 }
 
 // NewMainAgent 构建 main_agent：绑定 napcat client，配置 qq_message 的
-// 发送/历史两个工具和 todo_list 工具。
+// 发送/历史工具、todo_list、current_time 和 schedule_task 工具。
 func NewMainAgent(ctx context.Context, client *napcat.NapcatClient, chatModel model.BaseChatModel, todo *todo_list.Store) (*MainAgent, error) {
+	sched := scheduler.NewScheduler(scheduler.NewStore())
+	a := &MainAgent{client: client, todo: todo, sched: sched}
+
 	tools := []tool.BaseTool{
+		current_time.NewCurrentTimeTool(),
+		schedule_task.NewScheduleTaskTool(sched.Store(), a.currentSource),
 		qq_message.NewQQMessageSender(client),
 		qq_message.NewQQMessageGetter(client),
 		todo_list.NewTodoListTool(todo),
@@ -72,13 +84,18 @@ func NewMainAgent(ctx context.Context, client *napcat.NapcatClient, chatModel mo
 	}
 
 	runner := adk.NewRunner(ctx, adk.RunnerConfig{Agent: agent})
-	return &MainAgent{client: client, todo: todo, runner: runner}, nil
+	a.runner = runner
+	return a, nil
 }
 
 // Run 监听 NapCat 客户端的消息；私聊消息总是激活 agent，
-// 群聊消息仅当机器人被 @ 时才激活。
+// 群聊消息仅当机器人被 @ 时才激活；同时监听定时任务触发事件。
 // 阻塞直到 ctx 取消或客户端停止。
 func (a *MainAgent) Run(ctx context.Context) {
+	schedCtx, cancelSched := context.WithCancel(ctx)
+	defer cancelSched()
+	go a.sched.Run(schedCtx)
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -94,6 +111,11 @@ func (a *MainAgent) Run(ctx context.Context) {
 				continue
 			}
 			a.activate(ctx, msg)
+		case task, ok := <-a.sched.Fires():
+			if !ok {
+				continue
+			}
+			a.activateScheduled(ctx, task)
 		}
 	}
 }
@@ -103,6 +125,12 @@ func (a *MainAgent) Run(ctx context.Context) {
 func (a *MainAgent) activate(ctx context.Context, msg napcat.Message) {
 	log.Printf("[main_agent] 收到%s消息：%s", describeSource(msg), msg.Content)
 
+	a.setCurrentSource(scheduler.Source{
+		Description: describeSource(msg),
+		TargetType:  msg.MessageType,
+		TargetID:    replyTargetID(msg),
+		UserID:      msg.UserID,
+	})
 	a.todo.Add(todo_list.Item{
 		Content:    msg.Content,
 		Source:     describeSource(msg),
@@ -111,6 +139,34 @@ func (a *MainAgent) activate(ctx context.Context, msg napcat.Message) {
 		UserID:     msg.UserID,
 	})
 
+	a.runActivationLoop(ctx)
+}
+
+// activateScheduled 定时任务到点后把它作为一条待办加入列表，再唤醒 agent 执行，
+// 回复目标沿用创建任务时的消息来源。
+func (a *MainAgent) activateScheduled(ctx context.Context, task scheduler.Task) {
+	log.Printf("[main_agent] 定时任务触发：%s（%s，规则 %s）", task.ID, task.Content, task.Schedule)
+
+	a.setCurrentSource(scheduler.Source{
+		Description: task.Source,
+		TargetType:  task.TargetType,
+		TargetID:    task.TargetID,
+		UserID:      task.UserID,
+	})
+	a.todo.Add(todo_list.Item{
+		Content:    fmt.Sprintf("[定时任务 %s] %s", task.Schedule, task.Content),
+		Source:     task.Source,
+		TargetType: task.TargetType,
+		TargetID:   task.TargetID,
+		UserID:     task.UserID,
+	})
+
+	a.runActivationLoop(ctx)
+}
+
+// runActivationLoop 执行 agent 激活循环：跑一轮 agent，若待办列表仍有内容
+// 则再次唤醒，直到清空或达到上限。
+func (a *MainAgent) runActivationLoop(ctx context.Context) {
 	errorRetries := 0
 	for rewakes := 0; ; {
 		if err := a.runOnce(ctx, BuildActivationPrompt(a.todo.List())); err != nil {
@@ -138,6 +194,19 @@ func (a *MainAgent) activate(ctx context.Context, msg napcat.Message) {
 		}
 		log.Printf("[main_agent] 待办列表仍有 %d 项，再次唤醒 agent", a.todo.Len())
 	}
+}
+
+// currentSource 返回当前正在处理的消息来源，供 schedule_task 等工具作为默认回复目标。
+func (a *MainAgent) currentSource() scheduler.Source {
+	a.sourceMu.Lock()
+	defer a.sourceMu.Unlock()
+	return a.source
+}
+
+func (a *MainAgent) setCurrentSource(src scheduler.Source) {
+	a.sourceMu.Lock()
+	defer a.sourceMu.Unlock()
+	a.source = src
 }
 
 // runOnce 运行一轮 agent 并消费全部事件。本轮的用户消息和模型输出/工具结果
