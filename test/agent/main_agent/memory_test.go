@@ -2,6 +2,7 @@ package main_agent_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"regexp"
 	"strings"
@@ -11,6 +12,8 @@ import (
 
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
+	zero "github.com/wdvxdr1123/ZeroBot"
+	"github.com/wdvxdr1123/ZeroBot/message"
 
 	"miss-raspberry-agent/internal/agent/main_agent"
 	"miss-raspberry-agent/internal/napcat"
@@ -102,7 +105,17 @@ func TestMainAgentKeepsConversationMemoryAcrossActivations(t *testing.T) {
 	}
 
 	// 第二轮：群聊消息。此时模型应能看到第一轮的对话历史。
-	client.Incoming <- napcat.Message{MessageType: "group", UserID: 222, GroupID: 333, Content: "第二条消息"}
+	client.Incoming <- napcat.Message{
+		MessageType: "group",
+		UserID:      222,
+		GroupID:     333,
+		Content:     "第二条消息",
+		RawEvent: &zero.Event{
+			SelfID:        100,
+			NativeMessage: json.RawMessage(`[{"type":"at","data":{"qq":"100"}},{"type":"text","data":{"text":"第二条消息"}}]`),
+			Message:       message.Message{{Type: "text", Data: map[string]string{"text": "第二条消息"}}},
+		},
+	}
 	waitModelCalls(t, fake, 4)
 
 	lastInput := fake.lastInput()
