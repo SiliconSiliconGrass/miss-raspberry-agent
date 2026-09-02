@@ -229,8 +229,20 @@ func (c *NapcatClient) GetMessageHistory(ctx context.Context, targetType string,
 		return nil, fmt.Errorf("napcat: %s failed (retcode=%d, message=%s, wording=%s)", action, rsp.RetCode, rsp.Message, rsp.Wording)
 	}
 
-	messages := make([]HistoryMessage, 0, len(rsp.Data.Array()))
-	for _, item := range rsp.Data.Array() {
+	return ParseHistoryResponse(rsp.Data), nil
+}
+
+// ParseHistoryResponse 把 get_*_msg_history 响应的 data 部分解析为历史消息。
+// NapCat 的返回格式是 data.messages；也兼容直接返回消息数组的情况。
+func ParseHistoryResponse(data gjson.Result) []HistoryMessage {
+	// 直接对 data 调 Array() 会把整个对象当成一条“空消息”，必须取 messages 字段。
+	messagesResult := data.Get("messages")
+	if !messagesResult.Exists() {
+		messagesResult = data
+	}
+
+	messages := make([]HistoryMessage, 0, len(messagesResult.Array()))
+	for _, item := range messagesResult.Array() {
 		seq := item.Get("message_seq").Int()
 		if seq == 0 {
 			seq = item.Get("message_id").Int()
@@ -244,7 +256,7 @@ func (c *NapcatClient) GetMessageHistory(ctx context.Context, targetType string,
 			Content:    extractText(item),
 		})
 	}
-	return messages, nil
+	return messages
 }
 
 // extractText 从一条 OneBot 消息中提取纯文本内容。
