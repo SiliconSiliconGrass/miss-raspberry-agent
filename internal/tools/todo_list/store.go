@@ -1,5 +1,5 @@
-// Package todo_list 提供 agent 使用的待办列表存储与工具。
-// 该列表只用于记录需要立即处理的任务，不用于长期提醒。
+// Package todo_list provides the todo list storage and tools used by the agent.
+// This list is only for recording tasks that need immediate handling, not for long-term reminders.
 package todo_list
 
 import (
@@ -9,32 +9,32 @@ import (
 	"time"
 )
 
-// Item 是一条待办事项。
-// 当待办来自一条 QQ 消息时，Source/TargetType/TargetID/UserID
-// 记录了消息来源，方便 agent 用 qq_message_sender 回复。
+// Item is a single todo entry.
+// When a todo comes from a QQ message, Source/TargetType/TargetID/UserID
+// record the message source so the agent can reply using qq_message_sender.
 type Item struct {
 	ID         string `json:"id"`
 	Content    string `json:"content"`
-	Source     string `json:"source,omitempty"`      // 可读的消息来源描述
-	TargetType string `json:"target_type,omitempty"` // private=私聊，group=群聊
-	TargetID   int64  `json:"target_id,omitempty"`   // 回复目标：私聊为用户QQ号，群聊为群号
-	UserID     int64  `json:"user_id,omitempty"`     // 消息发送者QQ号
+	Source     string `json:"source,omitempty"`      // human-readable description of the message source
+	TargetType string `json:"target_type,omitempty"` // private=private chat, group=group chat
+	TargetID   int64  `json:"target_id,omitempty"`   // reply target: the user QQ number for private chat, the group number for group chat
+	UserID     int64  `json:"user_id,omitempty"`     // QQ number of the message sender
 	CreatedAt  int64  `json:"created_at"`
 }
 
-// Store 是内存中的线程安全待办列表。
+// Store is an in-memory thread-safe todo list.
 type Store struct {
 	mu     sync.RWMutex
 	items  map[string]Item
 	nextID int64
 }
 
-// NewStore 创建一个空的待办列表。
+// NewStore creates an empty todo list.
 func NewStore() *Store {
 	return &Store{items: make(map[string]Item)}
 }
 
-// Add 添加一条待办并返回带 ID 的条目。CreatedAt 为空时取当前时间。
+// Add adds a todo and returns the entry with its ID. When CreatedAt is zero, it is set to the current time.
 func (s *Store) Add(item Item) Item {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -48,7 +48,7 @@ func (s *Store) Add(item Item) Item {
 	return item
 }
 
-// List 返回全部待办，按创建时间从早到晚排列。
+// List returns all todos ordered by creation time from earliest to latest.
 func (s *Store) List() []Item {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -66,7 +66,7 @@ func (s *Store) List() []Item {
 	return items
 }
 
-// Complete 标记指定待办为已完成并立即删除；返回被删除的条目。
+// Complete marks the specified todo as done and removes it immediately; it returns the removed entry.
 func (s *Store) Complete(id string) (Item, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -78,14 +78,14 @@ func (s *Store) Complete(id string) (Item, bool) {
 	return item, ok
 }
 
-// IsEmpty 报告待办列表是否为空。
+// IsEmpty reports whether the todo list is empty.
 func (s *Store) IsEmpty() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return len(s.items) == 0
 }
 
-// Len 返回待办数量。
+// Len returns the number of todos.
 func (s *Store) Len() int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

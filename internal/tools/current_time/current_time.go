@@ -1,11 +1,11 @@
-// Package current_time 提供获取当前北京时间（Asia/Shanghai）的工具。
+// Package current_time provides a tool for getting the current Beijing time (Asia/Shanghai).
 package current_time
 
 import (
 	"context"
 	"log"
 	"time"
-	_ "time/tzdata" // 保证 Asia/Shanghai 时区数据可用
+	_ "time/tzdata" // Ensure Asia/Shanghai timezone data is available
 
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/components/tool/utils"
@@ -31,7 +31,7 @@ type CurrentTimeOutput struct {
 	Timezone string `json:"timezone"`
 }
 
-// CurrentTime 返回当前北京时间。
+// CurrentTime returns the current Beijing time.
 func CurrentTime(ctx context.Context, in *CurrentTimeInput) (*CurrentTimeOutput, error) {
 	now := time.Now().In(beijing)
 	return &CurrentTimeOutput{
@@ -63,7 +63,7 @@ func weekdayCN(d time.Weekday) string {
 	return d.String()
 }
 
-// NewCurrentTimeTool 构造“获取当前时间”工具。
+// NewCurrentTimeTool constructs the "get current time" tool.
 func NewCurrentTimeTool() tool.BaseTool {
 	t, err := utils.InferTool(
 		"current_time",

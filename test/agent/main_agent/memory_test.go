@@ -22,8 +22,9 @@ import (
 
 var itemIDPattern = regexp.MustCompile(`item-\d+`)
 
-// memoryFakeModel 每轮第一次 Generate 返回 todo_list complete 工具调用，
-// 第二次返回固定文本，从而让 agent 完成待办、清空列表后正常结束本轮。
+// memoryFakeModel returns a todo_list complete tool call on the first Generate of each round
+// and fixed text on the second, letting the agent complete the todo, empty the list, and end
+// the round normally.
 type memoryFakeModel struct {
 	mu       sync.Mutex
 	calls    int
@@ -97,14 +98,14 @@ func TestMainAgentKeepsConversationMemoryAcrossActivations(t *testing.T) {
 		<-done
 	}()
 
-	// 第一轮：私聊消息，agent 应 complete 掉待办。
+	// First round: a private message; the agent should complete the todo item.
 	client.Incoming <- napcat.Message{MessageType: "private", UserID: 111, Content: "第一条消息"}
 	waitModelCalls(t, fake, 2)
 	if !todo.IsEmpty() {
 		t.Fatalf("expected todo list to be cleared after first activation, got %d items", todo.Len())
 	}
 
-	// 第二轮：群聊消息。此时模型应能看到第一轮的对话历史。
+	// Second round: a group message. The model should now see the conversation history from the first round.
 	client.Incoming <- napcat.Message{
 		MessageType: "group",
 		UserID:      222,

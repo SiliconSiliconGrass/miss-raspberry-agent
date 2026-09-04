@@ -58,7 +58,7 @@ func TestScheduleTaskCreateListCancel(t *testing.T) {
 		t.Fatal("store should be empty after cancel")
 	}
 
-	// 再次取消返回“不存在”提示而不是错误。
+	// Canceling again returns a "does not exist" notice instead of an error.
 	out, err = schedule_task.RunScheduleTask(context.Background(), store, current, &schedule_task.ScheduleTaskInput{
 		Action: "cancel",
 		TaskID: createdID,

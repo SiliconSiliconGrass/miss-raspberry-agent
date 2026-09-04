@@ -18,7 +18,7 @@ import (
 	"miss-raspberry-agent/internal/tools/todo_list"
 )
 
-// countingModel 记录 Generate 调用次数；err 非 nil 时每次都返回错误。
+// countingModel records the number of Generate calls; when err is non-nil, it returns the error every time.
 type countingModel struct {
 	mu    sync.Mutex
 	calls int
@@ -65,15 +65,16 @@ func TestGroupMessageRequiresMention(t *testing.T) {
 		<-done
 	}()
 
-	// 群聊消息未@机器人：不应激活。
+	// A group message that does not mention the bot should not activate.
 	client.Incoming <- napcat.Message{MessageType: "group", GroupID: 1, UserID: 2, Content: "hi"}
 	time.Sleep(300 * time.Millisecond)
 	if fake.callCount() != 0 {
 		t.Fatalf("group message without mention should not activate, model called %d times", fake.callCount())
 	}
 
-	// 群聊消息@了机器人：应激活。这里按 ZeroBot 处理后的真实形态构造事件：
-	// Event.Message 中的 at 段已被 ZeroBot 剥离，原始 at 段在 NativeMessage 里。
+	// A group message mentioning the bot should activate. The event is built in the real
+	// post-processing shape used by ZeroBot: the at segment has been stripped from
+	// Event.Message, and the original at segment is kept in NativeMessage.
 	client.Incoming <- napcat.Message{
 		MessageType: "group",
 		GroupID:     1,
@@ -108,7 +109,8 @@ func TestActivateDeletesFirstTodoAfterMaxErrorRetries(t *testing.T) {
 		<-done
 	}()
 
-	// 私聊消息激活后模型一直失败：连续 5 次后应删除第一条待办并结束本轮。
+	// After the private message activates the agent, the model keeps failing: after 5 consecutive
+	// failures it should delete the first todo item and end this round.
 	client.Incoming <- napcat.Message{MessageType: "private", UserID: 111, Content: "任务"}
 	waitCount(t, fake, 5)
 	waitTodoEmpty(t, todo)

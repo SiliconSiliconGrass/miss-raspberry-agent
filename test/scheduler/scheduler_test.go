@@ -86,7 +86,7 @@ func TestSchedulerFiresRecurringTask(t *testing.T) {
 	store := scheduler.NewStoreWithLocation(bj)
 	sched := scheduler.NewScheduler(store)
 
-	start := time.Date(2024, 1, 1, 0, 0, 0, 0, bj) // 周一
+	start := time.Date(2024, 1, 1, 0, 0, 0, 0, bj) // Monday
 	weekly, err := scheduler.NewWeekly("Sun", "08:00")
 	if err != nil {
 		t.Fatal(err)
@@ -99,20 +99,20 @@ func TestSchedulerFiresRecurringTask(t *testing.T) {
 		t.Fatalf("next run = %d, want 2024-01-07 08:00", task.NextRunAt)
 	}
 
-	// 未到点不触发。
+	// Does not fire before the scheduled time.
 	sched.Tick(time.Date(2024, 1, 7, 7, 59, 59, 0, bj))
 	if len(store.List()) != 1 {
 		t.Fatal("task should still exist before trigger")
 	}
 
-	// 到点触发一次。
+	// Fires once when the time arrives.
 	sched.Tick(time.Date(2024, 1, 7, 8, 0, 0, 0, bj))
 	evt := waitFire(t, sched)
 	if evt.ID != task.ID {
 		t.Fatalf("unexpected fired task: %+v", evt)
 	}
 
-	// 重复任务应保留并推进到下一次。
+	// A recurring task should be kept and advanced to the next occurrence.
 	remaining := store.List()
 	if len(remaining) != 1 {
 		t.Fatalf("recurring task should remain, got %d", len(remaining))

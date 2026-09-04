@@ -29,7 +29,7 @@ type QQMessageGetterInput struct {
 	EndTime    int64  `json:"end_time" jsonschema:"description=时间范围终点（Unix 秒），可选"`
 }
 
-// QQHistoryMessage 返回给 agent 的一条历史消息。
+// QQHistoryMessage is a single history message returned to the agent.
 type QQHistoryMessage struct {
 	MessageID int64  `json:"message_id"`
 	Time      int64  `json:"time"`
@@ -42,16 +42,16 @@ type QQMessageGetterOutput struct {
 	Messages []QQHistoryMessage `json:"messages"`
 }
 
-// HistoryProvider 是历史消息来源，由 *napcat.NapcatClient 实现；
-// 拆成接口是为了在测试中替换消息来源。
+// HistoryProvider is the source of history messages, implemented by *napcat.NapcatClient;
+// it is split into an interface so the message source can be replaced in tests.
 type HistoryProvider interface {
 	GetMessageHistory(ctx context.Context, targetType string, targetID, beforeSeq int64, count int) ([]napcat.HistoryMessage, error)
 }
 
 var _ HistoryProvider = (*napcat.NapcatClient)(nil)
 
-// GetMessageHistory 按条数或时间范围获取指定目标（私聊/群聊）的文本消息历史，
-// 结果按时间从新到旧排列。只保留包含文本内容的消息。
+// GetMessageHistory fetches the text message history of the given target (private chat/group chat)
+// by count or by time range, with results ordered newest first. Only messages with text content are kept.
 func GetMessageHistory(ctx context.Context, provider HistoryProvider, in *QQMessageGetterInput) (*QQMessageGetterOutput, error) {
 	if err := validateGetterInput(in); err != nil {
 		return nil, err
@@ -97,8 +97,9 @@ func normalizeCount(count int) int {
 	return count
 }
 
-// fetchInTimeRange 从最新的消息开始向前翻页，取到覆盖 [start_time, end_time]
-// 的时间段为止（最多 maxHistoryFetch 条），再筛选出时间范围内的消息。
+// fetchInTimeRange pages backwards from the newest message until the fetched messages
+// cover the [start_time, end_time] window (at most maxHistoryFetch messages), then filters
+// to the messages within the time range.
 func fetchInTimeRange(ctx context.Context, provider HistoryProvider, in *QQMessageGetterInput) ([]napcat.HistoryMessage, error) {
 	startTime := in.StartTime
 	endTime := in.EndTime
@@ -154,8 +155,8 @@ func fetchInTimeRange(ctx context.Context, provider HistoryProvider, in *QQMessa
 	return selected, nil
 }
 
-// buildHistoryOutput 把历史消息整理成输出格式：按时间从新到旧排列，
-// 并且只保留有文本内容的消息。
+// buildHistoryOutput formats the history messages into the output shape: ordered newest first,
+// keeping only messages that have text content.
 func buildHistoryOutput(raw []napcat.HistoryMessage) *QQMessageGetterOutput {
 	sortHistoryNewestFirst(raw)
 	out := &QQMessageGetterOutput{}
@@ -180,13 +181,13 @@ func sortHistoryNewestFirst(messages []napcat.HistoryMessage) {
 	})
 }
 
-// NewQQMessageGetter 构造“获取QQ消息历史”工具。
+// NewQQMessageGetter constructs the "get QQ message history" tool.
 func NewQQMessageGetter(napcatClient *napcat.NapcatClient) tool.BaseTool {
 	fn := func(ctx context.Context, in *QQMessageGetterInput) (*QQMessageGetterOutput, error) {
 		return GetMessageHistory(ctx, napcatClient, in)
 	}
 	tool, err := utils.InferTool(
-		"qq_message_getter", // tool name，LLM 靠这个调用
+		"qq_message_getter", // tool name, used by the LLM to invoke it
 		"获取指定QQ用户或群聊的文本消息历史：可按条数（count）或时间范围（start_time/end_time）获取，返回按时间倒序的消息列表",
 		fn,
 	)

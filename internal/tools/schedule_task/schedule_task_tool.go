@@ -1,4 +1,4 @@
-// Package schedule_task 提供定时任务管理工具，供 agent 创建/查看/取消定时任务。
+// Package schedule_task provides the scheduled task management tool that lets the agent create/list/cancel scheduled tasks.
 package schedule_task
 
 import (
@@ -41,10 +41,10 @@ type ScheduleTaskOutput struct {
 	Message string           `json:"message,omitempty"`
 }
 
-// SourceProvider 返回当前正在处理的消息来源（回复目标）。
+// SourceProvider returns the message source (reply target) currently being handled.
 type SourceProvider func() scheduler.Source
 
-// RunScheduleTask 执行 create/list/cancel 三种定时任务操作。
+// RunScheduleTask performs the three scheduled task operations create/list/cancel.
 func RunScheduleTask(ctx context.Context, store *scheduler.Store, current SourceProvider, in *ScheduleTaskInput) (*ScheduleTaskOutput, error) {
 	switch in.Action {
 	case "create":
@@ -95,7 +95,7 @@ func RunScheduleTask(ctx context.Context, store *scheduler.Store, current Source
 	}
 }
 
-// buildSchedule 根据 type 及其对应参数构造调度规则，每个 type 单独校验和解析。
+// buildSchedule builds a schedule from type and its corresponding arguments, validating and parsing each type separately.
 func buildSchedule(in *ScheduleTaskInput, loc *time.Location) (*scheduler.Schedule, error) {
 	switch in.Type {
 	case "once":
@@ -131,7 +131,7 @@ func buildSchedule(in *ScheduleTaskInput, loc *time.Location) (*scheduler.Schedu
 	}
 }
 
-// NewScheduleTaskTool 构造定时任务管理工具。
+// NewScheduleTaskTool constructs the scheduled task management tool.
 func NewScheduleTaskTool(store *scheduler.Store, current SourceProvider) tool.BaseTool {
 	fn := func(ctx context.Context, in *ScheduleTaskInput) (*ScheduleTaskOutput, error) {
 		return RunScheduleTask(ctx, store, current, in)

@@ -9,11 +9,11 @@ import (
 	"github.com/cloudwego/eino/schema"
 )
 
-// patchOpenAIPayloadModel 包装 chat model，在每次调用前注入请求体修改器。
-// 背景：go-openai 序列化时用 omitempty 把空的 content 字段直接省略，
-// DeepSeek v4 等严格供应商会因此拒绝带 tool_calls 的 assistant 消息
-// （报 "Messages with role 'tool' must be a response to a preceding message with 'tool_calls'"），
-// 也会拒绝没有 content 的 tool 消息。这里统一补上 content 字段。
+// patchOpenAIPayloadModel wraps the chat model and injects a request-body modifier before each call.
+// Background: go-openai serializes with omitempty, so empty content fields are dropped entirely.
+// Strict providers such as DeepSeek v4 therefore reject assistant messages carrying tool_calls
+// (erroring with "Messages with role 'tool' must be a response to a preceding message with 'tool_calls'")
+// as well as tool messages without content. Here we uniformly add the content field back.
 type patchOpenAIPayloadModel struct {
 	inner model.BaseChatModel
 }
@@ -28,8 +28,9 @@ func (m *patchOpenAIPayloadModel) Stream(ctx context.Context, input []*schema.Me
 	return m.inner.Stream(ctx, input, opts...)
 }
 
-// patchMissingContent 给请求体中的 assistant(tool_calls) 消息和 tool 消息补上
-// content 字段（缺失时置为空字符串），保证与严格 OpenAI 兼容供应商的序列校验兼容。
+// patchMissingContent adds a content field (an empty string when absent) to assistant(tool_calls)
+// and tool messages in the request body, keeping the payload compatible with the sequence
+// validation of strict OpenAI-compatible providers.
 func patchMissingContent(_ context.Context, _ []*schema.Message, rawBody []byte) ([]byte, error) {
 	var payload map[string]any
 	if err := json.Unmarshal(rawBody, &payload); err != nil {

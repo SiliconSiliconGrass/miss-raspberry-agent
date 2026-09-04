@@ -10,8 +10,8 @@ import (
 	"miss-raspberry-agent/internal/tools/qq_message"
 )
 
-// fakeHistoryProvider 模拟 NapCat 的历史消息接口：
-// messages 按时间从新到旧排列，beforeSeq 大于 0 时只返回更早的消息。
+// fakeHistoryProvider simulates NapCat's history message API:
+// messages are ordered newest first, and when beforeSeq > 0 only earlier messages are returned.
 type fakeHistoryProvider struct {
 	messages []napcat.HistoryMessage
 	mu       sync.Mutex
@@ -79,7 +79,7 @@ func TestGetMessageHistoryByCount(t *testing.T) {
 func TestGetMessageHistoryKeepsOnlyTextMessages(t *testing.T) {
 	provider := &fakeHistoryProvider{messages: []napcat.HistoryMessage{
 		{MessageID: 103, MessageSeq: 103, Time: 300, UserID: 1, Content: "hello"},
-		{MessageID: 102, MessageSeq: 102, Time: 200, UserID: 2, Content: ""}, // 图片消息
+		{MessageID: 102, MessageSeq: 102, Time: 200, UserID: 2, Content: ""}, // image message
 		{MessageID: 101, MessageSeq: 101, Time: 100, UserID: 1, Content: "world"},
 	}}
 
@@ -100,7 +100,7 @@ func TestGetMessageHistoryKeepsOnlyTextMessages(t *testing.T) {
 }
 
 func TestGetMessageHistoryByTimeRangePaginates(t *testing.T) {
-	// 120 条消息，seq 与 time 都从 1000 递增到 1119（新的在后）。
+	// 120 messages with seq and time both increasing from 1000 to 1119 (newest last).
 	msgs := make([]napcat.HistoryMessage, 0, 120)
 	for seq := int64(1119); seq >= 1000; seq-- {
 		msgs = append(msgs, napcat.HistoryMessage{
@@ -206,7 +206,7 @@ func TestSendMessageRejectsUnknownTargetType(t *testing.T) {
 	}
 }
 
-// historyMessages 生成 n 条连续的历史消息，最新的在后（seq/time 从 n+100 递增）。
+// historyMessages generates n consecutive history messages, newest last (seq/time increment from n+100).
 func historyMessages(t *testing.T, n int) []napcat.HistoryMessage {
 	t.Helper()
 	msgs := make([]napcat.HistoryMessage, 0, n)

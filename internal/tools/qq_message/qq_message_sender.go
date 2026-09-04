@@ -21,7 +21,7 @@ type QQMessageSenderOutput struct {
 	Message string `json:"message"`
 }
 
-// SendMessage 把消息放入 NapCat 客户端的发送队列，由客户端负责实际发送。
+// SendMessage puts the message into the NapCat client's send queue; the client performs the actual sending.
 func SendMessage(ctx context.Context, client *napcat.NapcatClient, in *QQMessageSenderInput) (*QQMessageSenderOutput, error) {
 	var ok bool
 	switch in.TargetType {
@@ -46,8 +46,8 @@ func NewQQMessageSender(napcatClient *napcat.NapcatClient) tool.BaseTool {
 		return SendMessage(ctx, napcatClient, in)
 	}
 	tool, err := utils.InferTool(
-		"qq_message_sender", // tool name，LLM 靠这个调用
-		"向指定QQ用户或QQ群发送一条文本消息", // tool desc，写给 LLM 看的
+		"qq_message_sender", // tool name, used by the LLM to invoke it
+		"向指定QQ用户或QQ群发送一条文本消息", // tool desc, written for the LLM
 		fn,
 	)
 	if err != nil {

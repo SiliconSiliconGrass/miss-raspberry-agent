@@ -7,10 +7,11 @@ import (
 	"sort"
 	"sync"
 	"time"
-	_ "time/tzdata" // 保证 Asia/Shanghai 时区数据可用
+	_ "time/tzdata" // ensures the Asia/Shanghai timezone data is available
 )
 
-// Source 记录创建定时任务时的消息来源，触发后作为回复目标。
+// Source records where the scheduled task was created from; once fired it is
+// the reply target.
 type Source struct {
 	Description string
 	TargetType  string
@@ -18,7 +19,7 @@ type Source struct {
 	UserID      int64
 }
 
-// Task 是一条定时任务。
+// Task is a single scheduled task.
 type Task struct {
 	ID         string `json:"id"`
 	Content    string `json:"content"`
@@ -36,7 +37,7 @@ type Task struct {
 	loc *time.Location
 }
 
-// NextRunText 返回下一次触发时间的北京时间文本。
+// NextRunText returns the next firing time as Beijing-time text.
 func (t *Task) NextRunText() string {
 	if t.NextRunAt <= 0 || t.loc == nil {
 		return "-"
@@ -44,7 +45,7 @@ func (t *Task) NextRunText() string {
 	return time.Unix(t.NextRunAt, 0).In(t.loc).Format("2006-01-02 15:04:05")
 }
 
-// BeijingLocation 返回 Asia/Shanghai 时区。
+// BeijingLocation returns the Asia/Shanghai timezone.
 func BeijingLocation() *time.Location {
 	loc, err := time.LoadLocation("Asia/Shanghai")
 	if err != nil {
@@ -53,7 +54,7 @@ func BeijingLocation() *time.Location {
 	return loc
 }
 
-// Store 是线程安全的定时任务内存存储。
+// Store is a thread-safe in-memory store of scheduled tasks.
 type Store struct {
 	mu     sync.Mutex
 	tasks  map[string]*Task
@@ -61,12 +62,13 @@ type Store struct {
 	loc    *time.Location
 }
 
-// NewStore 创建一个使用北京时间的任务存储。
+// NewStore creates a task store that uses Beijing time.
 func NewStore() *Store {
 	return NewStoreWithLocation(BeijingLocation())
 }
 
-// NewStoreWithLocation 创建一个使用指定时区的任务存储（供测试等场景使用）。
+// NewStoreWithLocation creates a task store using the given timezone (e.g. for
+// tests).
 func NewStoreWithLocation(loc *time.Location) *Store {
 	if loc == nil {
 		loc = BeijingLocation()
@@ -74,12 +76,14 @@ func NewStoreWithLocation(loc *time.Location) *Store {
 	return &Store{tasks: map[string]*Task{}, loc: loc}
 }
 
-// Add 使用给定的调度规则创建定时任务。单次任务的目标时间必须晚于当前时间。
+// Add creates a scheduled task from the given schedule. A one-time task's
+// target time must be later than the current time.
 func (s *Store) Add(content string, sch *Schedule, src Source) (*Task, error) {
 	return s.AddAt(content, sch, src, time.Now().In(s.loc))
 }
 
-// AddAt 与 Add 相同，但使用指定的当前时间计算首次触发时间（供测试注入时钟）。
+// AddAt is like Add but computes the first firing time from the given current
+// time (for injecting a clock in tests).
 func (s *Store) AddAt(content string, sch *Schedule, src Source, now time.Time) (*Task, error) {
 	if sch == nil {
 		return nil, errors.New("schedule is required")
@@ -113,7 +117,7 @@ func (s *Store) AddAt(content string, sch *Schedule, src Source, now time.Time) 
 	return &copy, nil
 }
 
-// List 返回全部任务，按下次触发时间从早到晚排列。
+// List returns all tasks ordered by next firing time from earliest to latest.
 func (s *Store) List() []Task {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -130,7 +134,7 @@ func (s *Store) List() []Task {
 	return out
 }
 
-// Cancel 删除指定任务。
+// Cancel deletes the task with the given id.
 func (s *Store) Cancel(id string) (Task, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -142,12 +146,13 @@ func (s *Store) Cancel(id string) (Task, bool) {
 	return copyTask(t), true
 }
 
-// Location 返回任务存储使用的时区。
+// Location returns the timezone used by the task store.
 func (s *Store) Location() *time.Location {
 	return s.loc
 }
 
-// due 返回所有到点任务（按触发时间排序）。仅由 Scheduler 的调度协程调用。
+// due returns all due tasks (ordered by firing time). It is only called by the
+// Scheduler's dispatch goroutine.
 func (s *Store) due(now time.Time) []*Task {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -162,32 +167,35 @@ func (s *Store) due(now time.Time) []*Task {
 }
 
 func copyTask(t *Task) Task {
-	return *t // 浅拷贝；sch 只读共享
+	return *t // shallow copy; sch is shared read-only
 }
 
-// Scheduler 周期检查任务，到点后把触发事件发到 Fires 通道。
-// 事件发送成功后才推进任务状态，避免任务在通道拥塞时丢失。
+// Scheduler periodically checks tasks and sends a firing event on the Fires
+// channel when a task is due.
+// Task state only advances after the event has been sent successfully, so no
+// task is lost when the channel is congested.
 type Scheduler struct {
 	store *Store
 	fires chan Task
 }
 
-// NewScheduler 创建调度器。
+// NewScheduler creates a scheduler.
 func NewScheduler(store *Store) *Scheduler {
 	return &Scheduler{store: store, fires: make(chan Task, 256)}
 }
 
-// Store 返回底层任务存储。
+// Store returns the underlying task store.
 func (s *Scheduler) Store() *Store {
 	return s.store
 }
 
-// Fires 返回触发事件通道；每个事件是一次到点任务的副本。
+// Fires returns the firing-event channel; each event is a copy of a due task.
 func (s *Scheduler) Fires() <-chan Task {
 	return s.fires
 }
 
-// Run 阻塞运行调度循环（每秒检查一次），直到 ctx 取消。
+// Run blocks running the dispatch loop (checking once per second) until ctx is
+// cancelled.
 func (s *Scheduler) Run(ctx context.Context) {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
@@ -203,12 +211,13 @@ func (s *Scheduler) Run(ctx context.Context) {
 	}
 }
 
-// Tick 手动触发一次调度检查（供测试使用）。
+// Tick manually triggers one dispatch check (for tests).
 func (s *Scheduler) Tick(now time.Time) {
 	s.dispatch(context.Background(), now)
 }
 
-// dispatch 触发所有到点任务：单次任务删除，重复任务推进到下一次触发时间。
+// dispatch fires all due tasks: one-time tasks are deleted and repeating tasks
+// advance to their next firing time.
 func (s *Scheduler) dispatch(ctx context.Context, now time.Time) bool {
 	for _, t := range s.store.due(now) {
 		s.store.mu.Lock()

@@ -8,9 +8,9 @@ import (
 	"miss-raspberry-agent/internal/tools/todo_list"
 )
 
-// BaseSystemPrompt 是 main_agent 的系统提示词。
-// 注意：当前 adk 默认在会话值存在时会对 Instruction 做 f-string 格式化，
-// 因此提示词中不要使用花括号。
+// BaseSystemPrompt is the system prompt of main_agent.
+// Note: adk currently formats Instruction like an f-string when session values are present,
+// so the prompt must not contain curly braces.
 const BaseSystemPrompt = `
 你是网络开拓者协会（简称网协）的吉祥物树莓娘，是元气可爱的二次元少女形象。
 身份设定：隶属于高校学生组织网络开拓者协会，性格活泼软萌、亲切友善，说话语气俏皮灵动，自带少女感，偶尔会有点小调皮。但你不喜欢只会瞎水群却不做建设性讨论的家伙。你信奉“talk is cheap, show me the code”的极客精神，在网协工作中属于实干派。
@@ -46,7 +46,7 @@ const BaseSystemPrompt = `
 - todo_list：仅用于存放需要立即处理的任务，禁止把长期提醒、定时任务或远期事项放入其中。
 `
 
-// BuildActivationPrompt 构造 agent 被激活时的用户提示词，其中包含当前待办列表。
+// BuildActivationPrompt builds the user prompt used when the agent is activated; it includes the current todo list.
 func BuildActivationPrompt(items []todo_list.Item) string {
 	var sb strings.Builder
 	sb.WriteString("请处理当前待办列表中的全部事项。每条待办都来自需要立即处理的消息，包含消息内容、来源和时间。\n")

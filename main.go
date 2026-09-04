@@ -1,5 +1,6 @@
-// Command main 是项目的正式入口：启动 NapCat 客户端、构造 chat model 与
-// main_agent，然后监听 QQ 私聊/群聊消息驱动 agent。
+// Command main is the project's main entry point: it starts the NapCat client,
+// builds the chat model and main_agent, then listens for QQ private/group
+// messages to drive the agent.
 package main
 
 import (
@@ -26,7 +27,7 @@ func main() {
 }
 
 func run() error {
-	// .env 存在时加载，不存在则忽略（由部署环境注入环境变量）。
+	// Load .env if it exists; ignore it otherwise (env vars are injected by the deployment environment).
 	_ = godotenv.Load()
 
 	cfg, err := config.Load()
@@ -49,7 +50,7 @@ func run() error {
 	}
 	defer client.Stop()
 
-	// 直接构造 OpenAI 兼容 chat model，不强制 JSON 输出。
+	// Directly construct an OpenAI-compatible chat model without forcing JSON output.
 	chatModel, err := einoopenai.NewChatModel(ctx, &einoopenai.ChatModelConfig{
 		APIKey:  cfg.Model.APIKey,
 		BaseURL: cfg.Model.BaseURL,
@@ -65,7 +66,7 @@ func run() error {
 		return fmt.Errorf("build main agent: %w", err)
 	}
 
-	log.Println("[main] main_agent 已启动，等待 QQ 消息...")
+	log.Println("[main] main_agent started, waiting for QQ messages...")
 	agent.Run(ctx)
 	return nil
 }

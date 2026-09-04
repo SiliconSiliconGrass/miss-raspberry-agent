@@ -21,9 +21,9 @@ type mockChatRequest struct {
 	Messages []map[string]any `json:"messages"`
 }
 
-// strictMockServer 模拟 DeepSeek v4 的严格校验：tool 消息必须紧跟带匹配
-// tool_call_id 的 assistant(tool_calls) 消息，且 assistant(tool_calls)/tool
-// 消息必须带有 content 字段。不合法时返回 400。
+// strictMockServer simulates DeepSeek v4's strict validation: a tool message must immediately
+// follow an assistant(tool_calls) message with a matching tool_call_id, and
+// assistant(tool_calls)/tool messages must carry a content field. Returns 400 when invalid.
 type strictMockServer struct {
 	mu       sync.Mutex
 	calls    int
@@ -48,7 +48,7 @@ func (s *strictMockServer) handler() http.HandlerFunc {
 
 		w.Header().Set("Content-Type", "application/json")
 		if n%2 == 1 {
-			// 奇数请求：返回 tool call，模拟模型决定调用 todo_list
+			// Odd request: return a tool call, simulating the model deciding to invoke todo_list
 			callID := "call-" + string(rune('0'+n))
 			_, _ = w.Write([]byte(`{
 				"id":"chatcmpl-1","object":"chat.completion","created":1,"model":"test",
@@ -67,9 +67,9 @@ func (s *strictMockServer) handler() http.HandlerFunc {
 	}
 }
 
-// TestMainAgentStrictProviderToolSequence 验证 DeepSeek 严格校验场景：
-// 带 tool_calls 的 assistant 消息缺失 content 字段时会被 400 拒绝，
-// 我们的请求体补丁必须让所有请求通过校验。
+// TestMainAgentStrictProviderToolSequence verifies the DeepSeek strict validation scenario:
+// assistant messages with tool_calls that are missing a content field are rejected with 400,
+// so our request-body patch must let all requests pass validation.
 func TestMainAgentStrictProviderToolSequence(t *testing.T) {
 	mock := &strictMockServer{}
 	srv := httptest.NewServer(mock.handler())
@@ -128,7 +128,7 @@ func TestMainAgentStrictProviderToolSequence(t *testing.T) {
 	}
 }
 
-// validateStrictToolSequence 模拟 DeepSeek v4 的严格消息序列校验。
+// validateStrictToolSequence simulates DeepSeek v4's strict message sequence validation.
 func validateStrictToolSequence(req mockChatRequest) string {
 	for i, m := range req.Messages {
 		role, _ := m["role"].(string)

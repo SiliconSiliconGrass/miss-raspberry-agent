@@ -43,7 +43,7 @@ func TestNewWeekly(t *testing.T) {
 		t.Fatalf("times = %v, want [720]", sch.Times)
 	}
 
-	// 大小写、缩写、全称均可。
+	// Any case, abbreviation, or full name is accepted.
 	for _, in := range []string{"sat", "SAT", "Saturday"} {
 		sch, err := scheduler.NewWeekly(in, "12:00")
 		if err != nil || sch.Days[0] != time.Saturday {
@@ -109,7 +109,7 @@ func TestNewYearly(t *testing.T) {
 		t.Fatalf("times = %v, want [480]", sch.Times)
 	}
 
-	// 2月29日 在 2000（闰年）合法；不强制补零，"4-24" 也可以。
+	// February 29 is valid in 2000 (a leap year); zero padding is not required, "4-24" is also accepted.
 	if _, err := scheduler.NewYearly("02-29", "00:00"); err != nil {
 		t.Fatalf("02-29 should be valid: %v", err)
 	}
@@ -147,7 +147,7 @@ func TestParseDateTime(t *testing.T) {
 		{"2026-09-01 10:00", time.Date(2026, 9, 1, 10, 0, 0, 0, bj)},
 		{"2026-09-01 10:00:00", time.Date(2026, 9, 1, 10, 0, 0, 0, bj)},
 		{"2026/09/01 10:00", time.Date(2026, 9, 1, 10, 0, 0, 0, bj)},
-		{"2026-09-01", time.Date(2026, 9, 1, 0, 0, 0, 0, bj)}, // 只写日期按当天 00:00
+		{"2026-09-01", time.Date(2026, 9, 1, 0, 0, 0, 0, bj)}, // date only means that day at 00:00
 	}
 	for _, tc := range cases {
 		got, err := scheduler.ParseDateTime(tc.in, bj)
@@ -204,7 +204,7 @@ func TestScheduleNext(t *testing.T) {
 		{
 			name: "weekly same day later",
 			sch:  mustSchedule(t, func() (*scheduler.Schedule, error) { return scheduler.NewWeekly("Sun", "08:00") }),
-			now:  time.Date(2024, 1, 7, 7, 0, 0, 0, bj), // 2024-01-07 是周日
+			now:  time.Date(2024, 1, 7, 7, 0, 0, 0, bj), // 2024-01-07 is a Sunday
 			want: time.Date(2024, 1, 7, 8, 0, 0, 0, bj),
 			ok:   true,
 		},
@@ -218,7 +218,7 @@ func TestScheduleNext(t *testing.T) {
 		{
 			name: "weekly next weekday",
 			sch:  mustSchedule(t, func() (*scheduler.Schedule, error) { return scheduler.NewWeekly("Sat", "12:00") }),
-			now:  time.Date(2024, 1, 7, 12, 5, 0, 0, bj), // 周日
+			now:  time.Date(2024, 1, 7, 12, 5, 0, 0, bj), // Sunday
 			want: time.Date(2024, 1, 13, 12, 0, 0, 0, bj),
 			ok:   true,
 		},
@@ -232,7 +232,7 @@ func TestScheduleNext(t *testing.T) {
 		{
 			name: "monthly skips short month",
 			sch:  mustSchedule(t, func() (*scheduler.Schedule, error) { return scheduler.NewMonthly(30, "00:00") }),
-			now:  time.Date(2024, 1, 30, 10, 0, 0, 0, bj), // 2024-02 没有 30 号
+			now:  time.Date(2024, 1, 30, 10, 0, 0, 0, bj), // 2024-02 has no 30th
 			want: time.Date(2024, 3, 30, 0, 0, 0, 0, bj),
 			ok:   true,
 		},

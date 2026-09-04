@@ -8,12 +8,12 @@ import (
 	"time"
 )
 
-// NewOnce 构造一次性任务，在 at 时刻触发。
+// NewOnce builds a one-time task that fires at time at.
 func NewOnce(at time.Time) (*Schedule, error) {
 	return &Schedule{Kind: KindOnce, At: at}, nil
 }
 
-// NewRelative 构造一次性任务，在 now 之后 delay 触发。
+// NewRelative builds a one-time task that fires delay after now.
 func NewRelative(delay time.Duration) (*Schedule, error) {
 	if delay <= 0 {
 		return nil, errors.New("relative delay must be positive")
@@ -21,7 +21,7 @@ func NewRelative(delay time.Duration) (*Schedule, error) {
 	return &Schedule{Kind: KindRelative, Dur: delay}, nil
 }
 
-// NewDaily 构造每天在 time（"HH:MM"）触发的任务。
+// NewDaily builds a task that fires daily at time ("HH:MM").
 func NewDaily(t string) (*Schedule, error) {
 	m, err := parseTime(t)
 	if err != nil {
@@ -30,8 +30,10 @@ func NewDaily(t string) (*Schedule, error) {
 	return &Schedule{Kind: KindDaily, Times: []int{m}}, nil
 }
 
-// NewWeekly 构造每周在 weekday（英文星期）的 time 触发的任务。
-// weekday 接受 Mon/Tue/Wed/Thu/Fri/Sat/Sun 或 Monday…Sunday，大小写不敏感。
+// NewWeekly builds a task that fires weekly on weekday (English weekday names)
+// at time.
+// weekday accepts Mon/Tue/Wed/Thu/Fri/Sat/Sun or Monday...Sunday,
+// case-insensitively.
 func NewWeekly(weekday, t string) (*Schedule, error) {
 	d, err := parseWeekday(weekday)
 	if err != nil {
@@ -44,7 +46,7 @@ func NewWeekly(weekday, t string) (*Schedule, error) {
 	return &Schedule{Kind: KindWeekly, Days: []time.Weekday{d}, Times: []int{m}}, nil
 }
 
-// NewMonthly 构造每月 day（1-31）的 time 触发的任务。
+// NewMonthly builds a task that fires monthly on day (1-31) at time.
 func NewMonthly(day int, t string) (*Schedule, error) {
 	if day < 1 || day > 31 {
 		return nil, fmt.Errorf("monthly: invalid day %d (1-31)", day)
@@ -56,7 +58,7 @@ func NewMonthly(day int, t string) (*Schedule, error) {
 	return &Schedule{Kind: KindMonthly, DaysOfMonth: []int{day}, Times: []int{m}}, nil
 }
 
-// NewYearly 构造每年 date（"MM-DD"）的 time 触发的任务。
+// NewYearly builds a task that fires yearly on date ("MM-DD") at time.
 func NewYearly(date, t string) (*Schedule, error) {
 	md, err := parseMonthDay(date)
 	if err != nil {
@@ -69,7 +71,8 @@ func NewYearly(date, t string) (*Schedule, error) {
 	return &Schedule{Kind: KindYearly, Dates: []MonthDay{md}, Times: []int{m}}, nil
 }
 
-// ParseDateTime 把 "2006-01-02 15:04" 形式的字符串解析为 loc 时区的时刻。
+// ParseDateTime parses a string of the form "2006-01-02 15:04" into an instant
+// in the loc timezone.
 func ParseDateTime(s string, loc *time.Location) (time.Time, error) {
 	s = strings.TrimSpace(s)
 	layouts := []string{
@@ -86,7 +89,7 @@ func ParseDateTime(s string, loc *time.Location) (time.Time, error) {
 	return time.Time{}, fmt.Errorf("invalid datetime %q, want 2006-01-02 15:04", s)
 }
 
-// parseTime 解析 "HH:MM" 为分钟数（0..1439）。
+// parseTime parses "HH:MM" into minutes (0..1439).
 func parseTime(t string) (int, error) {
 	t = strings.TrimSpace(t)
 	parts := strings.SplitN(t, ":", 2)
@@ -101,7 +104,7 @@ func parseTime(t string) (int, error) {
 	return hh*60 + mm, nil
 }
 
-// parseWeekday 把英文星期解析为 time.Weekday。
+// parseWeekday parses an English weekday name into a time.Weekday.
 func parseWeekday(s string) (time.Weekday, error) {
 	switch strings.ToLower(strings.TrimSpace(s)) {
 	case "mon", "monday":
@@ -122,7 +125,7 @@ func parseWeekday(s string) (time.Weekday, error) {
 	return 0, fmt.Errorf("invalid weekday %q (use Mon/Tue/Wed/Thu/Fri/Sat/Sun or Monday...Sunday)", s)
 }
 
-// parseMonthDay 解析 "MM-DD" 为月日。
+// parseMonthDay parses "MM-DD" into a month-day.
 func parseMonthDay(s string) (MonthDay, error) {
 	s = strings.TrimSpace(s)
 	parts := strings.SplitN(s, "-", 2)
@@ -137,7 +140,8 @@ func parseMonthDay(s string) (MonthDay, error) {
 	return MonthDay{Month: mo, Day: d}, nil
 }
 
-// Describe 返回 ASCII 描述，用于向 agent 展示任务触发规则。
+// Describe returns an ASCII description of the task's firing rules, for
+// display to the agent.
 func (s *Schedule) Describe() string {
 	switch s.Kind {
 	case KindOnce:

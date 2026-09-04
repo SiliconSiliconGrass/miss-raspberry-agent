@@ -1,47 +1,52 @@
-// Package scheduler 提供定时任务的核心逻辑：时间表达式解析、任务存储与触发分发。
-// 时间表达式支持多种中文自然语言写法（见 Parse 的文档）。
+// Package scheduler provides the core logic for scheduled tasks: parsing time
+// expressions, storing tasks, and dispatching triggers.
+// Time expressions accept various Chinese natural-language phrasings such as
+// "today/tomorrow", "in 10min", and "February 29" (see the Parse documentation).
 package scheduler
 
 import (
 	"time"
 )
 
-// Kind 表示时间表达式的类型。
+// Kind is the type of a time expression.
 type Kind string
 
 const (
-	// KindOnce 是绝对时间或“今天/明天”等一次性触发。
+	// KindOnce is a one-time trigger at an absolute time or for Chinese
+	// natural-language phrases such as "today"/"tomorrow".
 	KindOnce Kind = "once"
-	// KindRelative 是相对时间，例如“10min之后”，触发一次。
+	// KindRelative is a relative-time trigger such as the Chinese
+	// natural-language phrase "in 10min", firing once.
 	KindRelative Kind = "relative"
-	// KindDaily 是每天固定时间重复触发。
+	// KindDaily repeats at a fixed time every day.
 	KindDaily Kind = "daily"
-	// KindWeekly 是每周若干星期几、若干时间重复触发。
+	// KindWeekly repeats at one or more times on one or more weekdays each week.
 	KindWeekly Kind = "weekly"
-	// KindMonthly 是每月若干日、若干时间重复触发。
+	// KindMonthly repeats at one or more times on one or more days each month.
 	KindMonthly Kind = "monthly"
-	// KindYearly 是每年若干月日、若干时间重复触发。
+	// KindYearly repeats at one or more times on one or more month-day dates each year.
 	KindYearly Kind = "yearly"
 )
 
-// MonthDay 表示“每年 M 月 D 日”。
+// MonthDay represents "month M, day D" of a year.
 type MonthDay struct {
 	Month int
 	Day   int
 }
 
-// Schedule 是一个时间表达式的解析结果，描述任务何时触发。
+// Schedule is the result of parsing a time expression and describes when a
+// task fires.
 type Schedule struct {
 	Kind        Kind
-	At          time.Time      // KindOnce 的触发时刻
-	Dur         time.Duration  // KindRelative 的延迟时长
-	Days        []time.Weekday // KindDaily / KindWeekly 的星期集合
-	DaysOfMonth []int          // KindMonthly 的每月几号
-	Dates       []MonthDay     // KindYearly 的月日集合
-	Times       []int          // 每天/每周/每月/每年触发的小时分钟数（0..1439）
+	At          time.Time      // trigger instant for KindOnce
+	Dur         time.Duration  // delay duration for KindRelative
+	Days        []time.Weekday // weekdays for KindDaily / KindWeekly
+	DaysOfMonth []int          // days of the month for KindMonthly
+	Dates       []MonthDay     // month-day dates for KindYearly
+	Times       []int          // hour-minute offsets (0..1439) of the daily/weekly/monthly/yearly firings
 }
 
-// Repeat 报告该表达式是否会重复触发。
+// Repeat reports whether the expression fires repeatedly.
 func (s *Schedule) Repeat() bool {
 	switch s.Kind {
 	case KindDaily, KindWeekly, KindMonthly, KindYearly:
@@ -51,8 +56,10 @@ func (s *Schedule) Repeat() bool {
 	}
 }
 
-// Next 返回 now 之后（严格晚于）的下一次触发时间；若不再触发则 ok=false。
-// now 应已位于目标时区（例如 Asia/Shanghai），返回的时间为绝对时刻。
+// Next returns the next firing time strictly after now; ok is false if it will
+// never fire again.
+// now must already be in the target timezone (e.g. Asia/Shanghai); the returned
+// time is an absolute instant.
 func (s *Schedule) Next(now time.Time) (time.Time, bool) {
 	switch s.Kind {
 	case KindOnce:
@@ -63,7 +70,7 @@ func (s *Schedule) Next(now time.Time) (time.Time, bool) {
 	case KindRelative:
 		return now.Add(s.Dur), true
 	case KindDaily, KindWeekly:
-		// 下周同一天最多需要偏移 7 天。
+		// The same weekday in the next week needs an offset of at most 7 days.
 		for off := 0; off < 8; off++ {
 			day := now.AddDate(0, 0, off)
 			if s.Kind == KindWeekly && !containsWeekday(s.Days, day.Weekday()) {
@@ -74,7 +81,8 @@ func (s *Schedule) Next(now time.Time) (time.Time, bool) {
 			}
 		}
 	case KindMonthly:
-		// 覆盖到下一个整月（含月末的 31 号），最多查 370 天。
+		// Cover up to the next full month (including the 31st at month end),
+		// searching at most 370 days.
 		for off := 0; off < 370; off++ {
 			day := now.AddDate(0, 0, off)
 			if !containsInt(s.DaysOfMonth, day.Day()) {
@@ -85,7 +93,8 @@ func (s *Schedule) Next(now time.Time) (time.Time, bool) {
 			}
 		}
 	case KindYearly:
-		// 覆盖到下一次出现（2月29日最多跨 4 年），最多查 1500 天。
+		// Cover until the next occurrence (February 29 may span up to 4
+		// years), searching at most 1500 days.
 		for off := 0; off < 1500; off++ {
 			day := now.AddDate(0, 0, off)
 			if !containsMonthDay(s.Dates, int(day.Month()), day.Day()) {
@@ -99,7 +108,8 @@ func (s *Schedule) Next(now time.Time) (time.Time, bool) {
 	return time.Time{}, false
 }
 
-// nextAtDay 返回 day 当天在 times 中第一个严格晚于 now 的时刻。
+// nextAtDay returns the first moment on day whose time is in times and is
+// strictly after now.
 func nextAtDay(day time.Time, times []int, now time.Time) (time.Time, bool) {
 	for _, m := range times {
 		t := time.Date(day.Year(), day.Month(), day.Day(), m/60, m%60, 0, 0, day.Location())

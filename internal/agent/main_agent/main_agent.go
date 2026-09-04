@@ -1,5 +1,6 @@
-// Package main_agent 实现绑定到 NapCat 客户端的 QQ 助手 agent：
-// 私聊消息时被激活，群聊消息仅当机器人被 @ 时被激活，然后处理待办列表并回复消息。
+// Package main_agent implements a QQ assistant agent bound to a NapCat client:
+// it activates on private messages and on group messages only when the bot is @-mentioned,
+// then processes the todo list and replies to messages.
 package main_agent
 
 import (
@@ -25,18 +26,20 @@ import (
 )
 
 const (
-	// maxRewakeAttempts 是单次激活内待办列表非空时最多连续唤醒 agent 的次数，
-	// 防止 agent 一直无法清空列表时无限循环消耗模型调用。
+	// maxRewakeAttempts is the maximum number of consecutive agent rewakes within a single
+	// activation while the todo list is non-empty, preventing an infinite loop that burns model
+	// calls when the agent never manages to clear the list.
 	maxRewakeAttempts = 5
-	// maxErrorRetries 是单次激活内 runOnce 连续失败时 catch 重试的上限；
-	// 达到上限后删除第一条待办，避免坏任务一直卡住激活流程。
+	// maxErrorRetries caps the catch-up retries when runOnce keeps failing within a single
+	// activation; once the cap is reached the first todo item is removed, so a bad task cannot
+	// keep blocking the activation flow.
 	maxErrorRetries = 5
-	// maxHistoryMessages 是保留的对话历史消息数上限（约 10 轮对话），
-	// 超出时丢弃最早的记录，避免上下文无限增长。
+	// maxHistoryMessages is the upper bound on the number of conversation history messages kept
+	// (roughly 10 turns); older entries are dropped beyond it to keep the context from growing unbounded.
 	maxHistoryMessages = 20
 )
 
-// MainAgent 是绑定到 NapCat 客户端的 QQ 助手。
+// MainAgent is a QQ assistant bound to a NapCat client.
 type MainAgent struct {
 	client *napcat.NapcatClient
 	todo   *todo_list.Store
@@ -50,8 +53,8 @@ type MainAgent struct {
 	source   scheduler.Source
 }
 
-// NewMainAgent 构建 main_agent：绑定 napcat client，配置 qq_message 的
-// 发送/历史工具、todo_list、current_time 和 schedule_task 工具。
+// NewMainAgent builds the main_agent: it binds the napcat client and wires up the qq_message
+// send/history tools, todo_list, current_time, and schedule_task tools.
 func NewMainAgent(ctx context.Context, client *napcat.NapcatClient, chatModel model.BaseChatModel, todo *todo_list.Store) (*MainAgent, error) {
 	sched := scheduler.NewScheduler(scheduler.NewStore())
 	a := &MainAgent{client: client, todo: todo, sched: sched}
@@ -64,8 +67,8 @@ func NewMainAgent(ctx context.Context, client *napcat.NapcatClient, chatModel mo
 		todo_list.NewTodoListTool(todo),
 	}
 
-	// 修复 OpenAI 兼容供应商（如 DeepSeek）对 tool 消息序列的严格校验：
-	// 为缺失 content 的 assistant(tool_calls)/tool 消息补上 content 字段。
+	// Work around strict OpenAI-compatible providers (e.g. DeepSeek) validating tool message
+	// sequences: add a content field to assistant(tool_calls)/tool messages that lack one.
 	chatModel = &patchOpenAIPayloadModel{inner: chatModel}
 
 	agent, err := adk.NewChatModelAgent(ctx, &adk.ChatModelAgentConfig{
@@ -88,9 +91,9 @@ func NewMainAgent(ctx context.Context, client *napcat.NapcatClient, chatModel mo
 	return a, nil
 }
 
-// Run 监听 NapCat 客户端的消息；私聊消息总是激活 agent，
-// 群聊消息仅当机器人被 @ 时才激活；同时监听定时任务触发事件。
-// 阻塞直到 ctx 取消或客户端停止。
+// Run listens for messages from the NapCat client; private messages always activate the agent,
+// while group messages do so only when the bot is @-mentioned. It also listens for scheduled-task
+// trigger events. It blocks until ctx is canceled or the client stops.
 func (a *MainAgent) Run(ctx context.Context) {
 	schedCtx, cancelSched := context.WithCancel(ctx)
 	defer cancelSched()
@@ -99,15 +102,15 @@ func (a *MainAgent) Run(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			log.Println("[main_agent] context canceled，停止监听")
+			log.Println("[main_agent] context canceled, stop listening")
 			return
 		case msg, ok := <-a.client.Incoming:
 			if !ok {
-				log.Println("[main_agent] napcat 客户端已停止")
+				log.Println("[main_agent] napcat client has stopped")
 				return
 			}
 			if !shouldActivate(msg) {
-				log.Printf("[main_agent] 群聊消息未@机器人，不激活（发送者=%d 内容=%s）", msg.UserID, msg.Content)
+				log.Printf("[main_agent] group message does not @ the bot, not activating (sender=%d content=%s)", msg.UserID, msg.Content)
 				continue
 			}
 			a.activate(ctx, msg)
@@ -120,10 +123,11 @@ func (a *MainAgent) Run(ctx context.Context) {
 	}
 }
 
-// activate 把收到的消息写入待办列表，然后执行 agent；
-// 每轮回复结束后检查待办列表，非空则再次唤醒，直到清空或达到最大唤醒次数。
+// activate writes the received message into the todo list, then runs the agent; after each round
+// of replies it checks the todo list and rewakes the agent while non-empty, until the list is
+// cleared or the maximum rewake count is reached.
 func (a *MainAgent) activate(ctx context.Context, msg napcat.Message) {
-	log.Printf("[main_agent] 收到%s消息：%s", describeSource(msg), msg.Content)
+	log.Printf("[main_agent] received %s message: %s", describeSource(msg), msg.Content)
 
 	a.setCurrentSource(scheduler.Source{
 		Description: describeSource(msg),
@@ -142,10 +146,10 @@ func (a *MainAgent) activate(ctx context.Context, msg napcat.Message) {
 	a.runActivationLoop(ctx)
 }
 
-// activateScheduled 定时任务到点后把它作为一条待办加入列表，再唤醒 agent 执行，
-// 回复目标沿用创建任务时的消息来源。
+// activateScheduled adds a scheduled task to the todo list as an item when it fires, then rewakes
+// the agent to handle it; the reply target reuses the message source captured when the task was created.
 func (a *MainAgent) activateScheduled(ctx context.Context, task scheduler.Task) {
-	log.Printf("[main_agent] 定时任务触发：%s（%s，规则 %s）", task.ID, task.Content, task.Schedule)
+	log.Printf("[main_agent] scheduled task fired: %s (%s, rule %s)", task.ID, task.Content, task.Schedule)
 
 	a.setCurrentSource(scheduler.Source{
 		Description: task.Source,
@@ -164,39 +168,40 @@ func (a *MainAgent) activateScheduled(ctx context.Context, task scheduler.Task) 
 	a.runActivationLoop(ctx)
 }
 
-// runActivationLoop 执行 agent 激活循环：跑一轮 agent，若待办列表仍有内容
-// 则再次唤醒，直到清空或达到上限。
+// runActivationLoop runs the agent activation loop: it runs one round of the agent and, if the
+// todo list still has items, rewakes it until the list is empty or the limit is reached.
 func (a *MainAgent) runActivationLoop(ctx context.Context) {
 	errorRetries := 0
 	for rewakes := 0; ; {
 		if err := a.runOnce(ctx, BuildActivationPrompt(a.todo.List())); err != nil {
 			errorRetries++
-			log.Printf("[main_agent] 本轮 agent 执行失败（连续第 %d 次，上限 %d 次）: %v", errorRetries, maxErrorRetries, err)
+			log.Printf("[main_agent] agent execution failed this round (%d consecutive failures, limit %d): %v", errorRetries, maxErrorRetries, err)
 			if errorRetries >= maxErrorRetries {
 				if items := a.todo.List(); len(items) > 0 {
 					a.todo.Complete(items[0].ID)
-					log.Printf("[main_agent] 连续失败 %d 次，已删除第一条待办 %s，本轮结束", maxErrorRetries, items[0].ID)
+					log.Printf("[main_agent] failed %d consecutive times, removed the first todo %s, ending this round", maxErrorRetries, items[0].ID)
 				}
 				return
 			}
-			log.Println("[main_agent] 已捕获错误，重新执行 agent")
+			log.Println("[main_agent] error caught, re-running the agent")
 			continue
 		}
 		errorRetries = 0
 		if a.todo.IsEmpty() {
-			log.Println("[main_agent] 待办列表已清空，本轮结束")
+			log.Println("[main_agent] todo list cleared, ending this round")
 			return
 		}
 		rewakes++
 		if rewakes > maxRewakeAttempts {
-			log.Printf("[main_agent] 连续唤醒 %d 次后待办列表仍不为空（剩余 %d 项），停止本轮", maxRewakeAttempts, a.todo.Len())
+			log.Printf("[main_agent] todo list still not empty after %d consecutive rewakes (%d items remaining), stopping this round", maxRewakeAttempts, a.todo.Len())
 			return
 		}
-		log.Printf("[main_agent] 待办列表仍有 %d 项，再次唤醒 agent", a.todo.Len())
+		log.Printf("[main_agent] todo list still has %d items, rewaking the agent", a.todo.Len())
 	}
 }
 
-// currentSource 返回当前正在处理的消息来源，供 schedule_task 等工具作为默认回复目标。
+// currentSource returns the source of the message currently being handled, used by tools such as
+// schedule_task as the default reply target.
 func (a *MainAgent) currentSource() scheduler.Source {
 	a.sourceMu.Lock()
 	defer a.sourceMu.Unlock()
@@ -209,8 +214,9 @@ func (a *MainAgent) setCurrentSource(src scheduler.Source) {
 	a.source = src
 }
 
-// runOnce 运行一轮 agent 并消费全部事件。本轮的用户消息和模型输出/工具结果
-// 会在成功后写入历史，使后续激活能携带上下文记忆。
+// runOnce runs one round of the agent and consumes all events. The user message and the model
+// outputs/tool results of this round are committed to history on success, so later activations
+// carry conversational context.
 func (a *MainAgent) runOnce(ctx context.Context, prompt string) error {
 	userMsg := schema.UserMessage(prompt)
 
@@ -230,7 +236,7 @@ func (a *MainAgent) runOnce(ctx context.Context, prompt string) error {
 			break
 		}
 		if event.Err != nil {
-			log.Printf("[main_agent] agent 事件错误: %v", event.Err)
+			log.Printf("[main_agent] agent event error: %v", event.Err)
 			lastErr = event.Err
 		}
 		if event.Output == nil || event.Output.MessageOutput == nil {
@@ -244,14 +250,14 @@ func (a *MainAgent) runOnce(ctx context.Context, prompt string) error {
 		case schema.Assistant:
 			runMsgs = append(runMsgs, mv.Message)
 			for _, tc := range mv.Message.ToolCalls {
-				log.Printf("[main_agent] 工具调用: %s 参数: %s", tc.Function.Name, tc.Function.Arguments)
+				log.Printf("[main_agent] tool call: %s args: %s", tc.Function.Name, tc.Function.Arguments)
 			}
 			if mv.Message.Content != "" {
-				log.Printf("[main_agent] 模型回复: %s", mv.Message.Content)
+				log.Printf("[main_agent] model reply: %s", mv.Message.Content)
 			}
 		case schema.Tool:
 			runMsgs = append(runMsgs, mv.Message)
-			log.Printf("[main_agent] 工具结果: %s => %s", mv.ToolName, mv.Message.Content)
+			log.Printf("[main_agent] tool result: %s => %s", mv.ToolName, mv.Message.Content)
 		}
 	}
 	if lastErr != nil {
@@ -264,8 +270,8 @@ func (a *MainAgent) runOnce(ctx context.Context, prompt string) error {
 	return nil
 }
 
-// shouldActivate 判断消息是否触发 agent：私聊消息总是激活；
-// 群聊消息仅当机器人自己被 @ 时才激活。
+// shouldActivate decides whether a message triggers the agent: private messages always activate it;
+// group messages do so only when the bot itself is @-mentioned.
 func shouldActivate(msg napcat.Message) bool {
 	if msg.MessageType != "group" {
 		return true
@@ -273,12 +279,12 @@ func shouldActivate(msg napcat.Message) bool {
 	return isBotMentioned(msg)
 }
 
-// isBotMentioned 检查群聊消息中是否有 @ 机器人本人的 at 段。
+// isBotMentioned checks whether a group message contains an at segment mentioning the bot itself.
 //
-// 注意：ZeroBot 在预处理消息事件时，检测到 @ 的是机器人本人就会把该 at 段
-// 从 Event.Message 中移除（除非配置 KeepAtMeMessage）。因此这里必须从
-// Event.NativeMessage（原始 message 字段，尚未被 ZeroBot 处理）解析消息段，
-// 而不能用已经处理过的 Event.Message，否则永远检测不到 @。
+// Note: when ZeroBot pre-processes a message event, it removes any at segment that mentions the
+// bot itself from Event.Message (unless KeepAtMeMessage is configured). Therefore we must parse
+// segments from Event.NativeMessage (the raw message field, not yet processed by ZeroBot) rather
+// than from the already-processed Event.Message, otherwise the @ mention would never be detected.
 func isBotMentioned(msg napcat.Message) bool {
 	if msg.RawEvent == nil {
 		return false
@@ -287,8 +293,8 @@ func isBotMentioned(msg napcat.Message) bool {
 
 	segs := message.ParseMessage(msg.RawEvent.NativeMessage)
 	if len(segs) == 0 {
-		// 兜底：调用方直接构造 Event 且未填 NativeMessage 时，
-		// 退回检查已处理过的消息段。
+		// Fallback: when the caller constructs the Event directly and left NativeMessage empty,
+		// fall back to inspecting the already-processed message segments.
 		segs = msg.RawEvent.Message
 	}
 	for _, seg := range segs {
@@ -299,11 +305,11 @@ func isBotMentioned(msg napcat.Message) bool {
 	return false
 }
 
-// sanitizeHistory 清理历史中不完整的工具调用片段，避免严格供应商（如 DeepSeek）
-// 校验消息序列时报 400：
-//   - 丢弃没有前置 assistant(tool_calls) 匹配的孤儿 tool 消息。
+// sanitizeHistory cleans up incomplete tool-call fragments in the history, avoiding a 400 from
+// strict providers (e.g. DeepSeek) when they validate the message sequence:
+//   - drop orphan tool messages that have no preceding assistant(tool_calls) to match them.
 //
-// 正常情况下历史只在整轮成功后才提交，此处是防御性清理。
+// Normally history is only committed after a whole round succeeds; this is defensive cleanup.
 func sanitizeHistory(messages []*schema.Message) []*schema.Message {
 	out := make([]*schema.Message, 0, len(messages))
 	pendingIDs := map[string]bool{}
@@ -326,7 +332,7 @@ func sanitizeHistory(messages []*schema.Message) []*schema.Message {
 				out = append(out, m)
 				continue
 			}
-			// 孤儿 tool 消息：丢弃
+			// Orphan tool message: dropped
 		default:
 			out = append(out, m)
 		}
@@ -334,14 +340,15 @@ func sanitizeHistory(messages []*schema.Message) []*schema.Message {
 	return out
 }
 
-// withUserMessage 返回历史消息加一条新用户消息的副本（不修改原历史）。
+// withUserMessage returns a copy of the history plus one new user message (the original history
+// is not modified).
 func withUserMessage(history []*schema.Message, userMsg *schema.Message) []*schema.Message {
 	messages := make([]*schema.Message, 0, len(history)+1)
 	messages = append(messages, history...)
 	return append(messages, userMsg)
 }
 
-// trimHistory 只保留最近 max 条消息。
+// trimHistory keeps only the most recent max messages.
 func trimHistory(messages []*schema.Message, max int) []*schema.Message {
 	if max <= 0 || len(messages) <= max {
 		return messages
@@ -349,7 +356,8 @@ func trimHistory(messages []*schema.Message, max int) []*schema.Message {
 	return messages[len(messages)-max:]
 }
 
-// describeSource 生成可读的消息来源描述，供待办列表展示。
+// describeSource produces a human-readable description of the message source, for display in the
+// todo list.
 func describeSource(msg napcat.Message) string {
 	switch msg.MessageType {
 	case "group":
@@ -359,8 +367,8 @@ func describeSource(msg napcat.Message) string {
 	}
 }
 
-// replyTargetID 返回回复消息时应使用的 target_id：
-// 群聊回复群号，私聊回复用户QQ号。
+// replyTargetID returns the target_id to use when replying to a message: the group ID for group
+// chats and the user's QQ number for private chats.
 func replyTargetID(msg napcat.Message) int64 {
 	if msg.MessageType == "group" {
 		return msg.GroupID

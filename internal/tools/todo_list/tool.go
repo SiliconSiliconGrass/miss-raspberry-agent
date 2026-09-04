@@ -21,7 +21,7 @@ type TodoListOutput struct {
 	Message string `json:"message,omitempty"`
 }
 
-// RunTodoList 执行 list/add/complete 三种待办操作。
+// RunTodoList performs the three todo operations list/add/complete.
 func RunTodoList(ctx context.Context, store *Store, in *TodoListInput) (*TodoListOutput, error) {
 	switch in.Action {
 	case "list":
@@ -55,7 +55,7 @@ func RunTodoList(ctx context.Context, store *Store, in *TodoListInput) (*TodoLis
 	}
 }
 
-// NewTodoListTool 构造待办列表工具。
+// NewTodoListTool constructs the todo list tool.
 func NewTodoListTool(store *Store) tool.BaseTool {
 	fn := func(ctx context.Context, in *TodoListInput) (*TodoListOutput, error) {
 		return RunTodoList(ctx, store, in)

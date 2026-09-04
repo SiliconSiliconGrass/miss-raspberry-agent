@@ -14,7 +14,7 @@ import (
 	"github.com/wdvxdr1123/ZeroBot/driver"
 )
 
-// 消息结构体，用于内部通信
+// Message is the struct used for internal communication.
 type Message struct {
 	UserID      int64
 	GroupID     int64
@@ -24,8 +24,8 @@ type Message struct {
 	RawEvent    *zero.Event
 }
 
-// HistoryMessage 一条历史消息记录。Content 仅包含文本内容，
-// 非文本消息（如图片、语音）Content 为空字符串。
+// HistoryMessage is a record of one historical message. Content only contains
+// the text payload; non-text messages (e.g. images, voice) leave Content empty.
 type HistoryMessage struct {
 	MessageID  int64
 	MessageSeq int64
@@ -35,24 +35,24 @@ type HistoryMessage struct {
 	Content    string
 }
 
-// NapcatClient 结构体
+// NapcatClient struct.
 type NapcatClient struct {
-	// 配置
+	// Configuration.
 	config *NapcatClientConfig
 
-	// 消息通道
-	// Incoming: 收到的消息（NapCat -> Agent）
-	// Outgoing: 要发送的消息（Agent -> NapCat）
+	// Message channels.
+	// Incoming: received messages (NapCat -> Agent)
+	// Outgoing: messages to send (Agent -> NapCat)
 	Incoming chan Message
 	Outgoing chan Message
 
-	// 控制
+	// Control.
 	mu      sync.RWMutex
 	running bool
 	done    chan struct{}
 }
 
-// 默认配置
+// DefaultConfig.
 func DefaultConfig() *NapcatClientConfig {
 	return &NapcatClientConfig{
 		WebSocketURL:  "ws://127.0.0.1:3001",
@@ -63,7 +63,7 @@ func DefaultConfig() *NapcatClientConfig {
 	}
 }
 
-// 构造函数
+// Constructor.
 func NewClient(cfg *NapcatClientConfig) *NapcatClient {
 	if cfg == nil {
 		cfg = DefaultConfig()
@@ -77,7 +77,7 @@ func NewClient(cfg *NapcatClientConfig) *NapcatClient {
 	}
 }
 
-// 启动客户端（非阻塞）
+// Start starts the client (non-blocking).
 func (c *NapcatClient) Start() error {
 	c.mu.Lock()
 	if c.running {
@@ -87,9 +87,9 @@ func (c *NapcatClient) Start() error {
 	c.running = true
 	c.mu.Unlock()
 
-	// 注册消息处理器
+	// Register the message handler.
 	zero.OnMessage(func(ctx *zero.Ctx) bool {
-		// 可以在这里加过滤逻辑
+		// Filtering logic can be added here.
 		return true
 	}).Handle(func(ctx *zero.Ctx) {
 		nickname := ""
@@ -105,19 +105,19 @@ func (c *NapcatClient) Start() error {
 			RawEvent:    ctx.Event,
 		}
 
-		// 非阻塞发送到 Incoming channel
+		// Send to the Incoming channel without blocking.
 		select {
 		case c.Incoming <- msg:
-			log.Printf("[Napcat] 收到消息: %s", msg.Content)
+			log.Printf("[Napcat] received message: %s", msg.Content)
 		default:
-			log.Println("[Napcat] Incoming channel 已满，丢弃消息")
+			log.Println("[Napcat] Incoming channel is full, dropping message")
 		}
 	})
 
-	// 启动 Outgoing 消息处理 goroutine
+	// Start the goroutine that processes Outgoing messages.
 	go c.processOutgoing()
 
-	// 启动 ZeroBot（在 goroutine 中运行，避免阻塞）
+	// Start ZeroBot (run in a goroutine to avoid blocking).
 	go func() {
 		zero.Run(&zero.Config{
 			NickName:      c.config.NickName,
@@ -133,7 +133,7 @@ func (c *NapcatClient) Start() error {
 	return nil
 }
 
-// 停止客户端
+// Stop stops the client.
 func (c *NapcatClient) Stop() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -150,7 +150,7 @@ func (c *NapcatClient) Stop() {
 	log.Println("[Napcat] Client stopped")
 }
 
-// 发送私聊消息（Agent 调用）
+// SendMessage sends a private message (called by the Agent).
 func (c *NapcatClient) SendMessage(userID int64, content string) bool {
 	msg := Message{
 		UserID:  userID,
@@ -160,11 +160,11 @@ func (c *NapcatClient) SendMessage(userID int64, content string) bool {
 	if !c.enqueue(msg) {
 		return false
 	}
-	log.Printf("[Napcat] 消息已加入发送队列: %s", content)
+	log.Printf("[Napcat] message queued for sending: %s", content)
 	return true
 }
 
-// 发送群消息（Agent 调用）
+// SendGroupMessage sends a group message (called by the Agent).
 func (c *NapcatClient) SendGroupMessage(groupID int64, content string) bool {
 	msg := Message{
 		GroupID: groupID,
@@ -174,25 +174,26 @@ func (c *NapcatClient) SendGroupMessage(groupID int64, content string) bool {
 	if !c.enqueue(msg) {
 		return false
 	}
-	log.Printf("[Napcat] 群消息已加入发送队列: %s", content)
+	log.Printf("[Napcat] group message queued for sending: %s", content)
 	return true
 }
 
-// enqueue 把消息放入 Outgoing 队列；队列已满时返回 false
+// enqueue puts a message into the Outgoing queue; returns false if the queue is full.
 func (c *NapcatClient) enqueue(msg Message) bool {
 	select {
 	case c.Outgoing <- msg:
 		return true
 	default:
-		log.Println("[Napcat] Outgoing channel 已满，发送失败")
+		log.Println("[Napcat] Outgoing channel is full, send failed")
 		return false
 	}
 }
 
-// GetMessageHistory 获取私聊（private）或群聊（group）的历史消息。
+// GetMessageHistory fetches historical messages for a private or group chat.
 //
-// beforeSeq 为 0 时返回最新的 count 条；大于 0 时返回 message_seq 小于
-// beforeSeq 的 count 条，用于向前翻页。返回的消息按接口顺序排列。
+// When beforeSeq is 0 it returns the latest count messages; when greater than 0
+// it returns count messages whose message_seq is less than beforeSeq, for paging
+// backwards. The returned messages are ordered as returned by the API.
 func (c *NapcatClient) GetMessageHistory(ctx context.Context, targetType string, targetID, beforeSeq int64, count int) ([]HistoryMessage, error) {
 	action := "get_group_msg_history"
 	params := zero.Params{
@@ -232,10 +233,12 @@ func (c *NapcatClient) GetMessageHistory(ctx context.Context, targetType string,
 	return ParseHistoryResponse(rsp.Data), nil
 }
 
-// ParseHistoryResponse 把 get_*_msg_history 响应的 data 部分解析为历史消息。
-// NapCat 的返回格式是 data.messages；也兼容直接返回消息数组的情况。
+// ParseHistoryResponse parses the data part of a get_*_msg_history response
+// into historical messages. NapCat returns the data as data.messages; this also
+// accepts a direct array of messages.
 func ParseHistoryResponse(data gjson.Result) []HistoryMessage {
-	// 直接对 data 调 Array() 会把整个对象当成一条“空消息”，必须取 messages 字段。
+	// Calling Array() directly on data treats the whole object as one "empty
+	// message"; the messages field must be read instead.
 	messagesResult := data.Get("messages")
 	if !messagesResult.Exists() {
 		messagesResult = data
@@ -259,8 +262,9 @@ func ParseHistoryResponse(data gjson.Result) []HistoryMessage {
 	return messages
 }
 
-// extractText 从一条 OneBot 消息中提取纯文本内容。
-// message 可能是字符串，也可能是消息段数组；只保留 type=text 的段。
+// extractText extracts plain text from a OneBot message.
+// message may be a string or an array of message segments; only segments of
+// type=text are kept.
 func extractText(item gjson.Result) string {
 	message := item.Get("message")
 	if message.Type == gjson.String {
@@ -276,14 +280,14 @@ func extractText(item gjson.Result) string {
 	return sb.String()
 }
 
-// 处理 Outgoing 消息的 goroutine
+// processOutgoing is the goroutine that processes Outgoing messages.
 func (c *NapcatClient) processOutgoing() {
 	for {
 		select {
 		case <-c.done:
 			return
 		case msg := <-c.Outgoing:
-			// 通过 ZeroBot 发送消息
+			// Send the message via ZeroBot.
 			zero.RangeBot(func(_ int64, ctx *zero.Ctx) bool {
 				if msg.GroupID != 0 {
 					ctx.SendGroupMessage(msg.GroupID, msg.Content)
@@ -292,12 +296,12 @@ func (c *NapcatClient) processOutgoing() {
 				}
 				return false
 			})
-			log.Printf("[Napcat] 消息已发送: %s", msg.Content)
+			log.Printf("[Napcat] message sent: %s", msg.Content)
 		}
 	}
 }
 
-// 获取消息（阻塞式，Agent 使用）
+// GetMessage gets a message (blocking; used by the Agent).
 func (c *NapcatClient) GetMessage() (Message, bool) {
 	msg, ok := <-c.Incoming
 	return msg, ok
