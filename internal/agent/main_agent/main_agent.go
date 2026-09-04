@@ -143,7 +143,7 @@ func (a *MainAgent) activate(ctx context.Context, msg napcat.Message) {
 		UserID:     msg.UserID,
 	})
 
-	a.runActivationLoop(ctx)
+	a.drainTodoList(ctx)
 }
 
 // activateScheduled adds a scheduled task to the todo list as an item when it fires, then rewakes
@@ -165,12 +165,13 @@ func (a *MainAgent) activateScheduled(ctx context.Context, task scheduler.Task) 
 		UserID:     task.UserID,
 	})
 
-	a.runActivationLoop(ctx)
+	a.drainTodoList(ctx)
 }
 
-// runActivationLoop runs the agent activation loop: it runs one round of the agent and, if the
-// todo list still has items, rewakes it until the list is empty or the limit is reached.
-func (a *MainAgent) runActivationLoop(ctx context.Context) {
+// drainTodoList runs one round of the agent and, if the todo list still has items, rewakes it
+// until the list is empty or the rewake/error caps are reached. It returns once the current
+// activation's work is fully handled (or abandoned after the caps).
+func (a *MainAgent) drainTodoList(ctx context.Context) {
 	errorRetries := 0
 	for rewakes := 0; ; {
 		if err := a.runOnce(ctx, BuildActivationPrompt(a.todo.List())); err != nil {
