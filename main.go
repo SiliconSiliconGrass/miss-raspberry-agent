@@ -1,6 +1,6 @@
 // Command main is the project's main entry point: it starts the NapCat client,
-// builds the chat model and main_agent, then listens for QQ private/group
-// messages to drive the agent.
+// builds the chat model and main_agent, wires qualifying QQ messages into the
+// agent's todo queue, and then lets the agent process that queue.
 package main
 
 import (
@@ -17,7 +17,6 @@ import (
 	"miss-raspberry-agent/internal/agent/main_agent"
 	"miss-raspberry-agent/internal/config"
 	"miss-raspberry-agent/internal/napcat"
-	"miss-raspberry-agent/internal/tools/todo_list"
 )
 
 func main() {
@@ -38,18 +37,6 @@ func run() error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	client := napcat.NewClient(&napcat.NapcatClientConfig{
-		WebSocketURL:  cfg.Napcat.WebSocketURL,
-		AccessToken:   cfg.Napcat.AccessToken,
-		NickName:      []string{"bot"},
-		CommandPrefix: "/",
-		SuperUsers:    []int64{},
-	})
-	if err := client.Start(); err != nil {
-		return fmt.Errorf("start napcat client: %w", err)
-	}
-	defer client.Stop()
-
 	// Directly construct an OpenAI-compatible chat model without forcing JSON output.
 	chatModel, err := einoopenai.NewChatModel(ctx, &einoopenai.ChatModelConfig{
 		APIKey:  cfg.Model.APIKey,
@@ -60,13 +47,28 @@ func run() error {
 		return fmt.Errorf("construct chat model: %w", err)
 	}
 
-	todo := todo_list.NewStore()
-	agent, err := main_agent.NewMainAgent(ctx, client, chatModel, todo)
+	client := napcat.NewClient(&napcat.NapcatClientConfig{
+		WebSocketURL:  cfg.Napcat.WebSocketURL,
+		AccessToken:   cfg.Napcat.AccessToken,
+		NickName:      []string{"bot"},
+		CommandPrefix: "/",
+		SuperUsers:    []int64{},
+	})
+
+	agent, err := main_agent.NewMainAgent(ctx, chatModel, client, client)
 	if err != nil {
 		return fmt.Errorf("build main agent: %w", err)
 	}
 
-	log.Println("[main] main_agent started, waiting for QQ messages...")
+	// Route qualifying QQ messages into the agent's own todo queue before the client starts,
+	// so no message is dropped during startup.
+	client.SetTodoList(agent.Queue())
+	if err := client.Start(); err != nil {
+		return fmt.Errorf("start napcat client: %w", err)
+	}
+	defer client.Stop()
+
+	log.Println("[main] main_agent started, polling its todo queue...")
 	agent.Run(ctx)
 	return nil
 }

@@ -1,23 +1,21 @@
-// Package main_agent implements a QQ assistant agent bound to a NapCat client:
-// it activates on private messages and on group messages only when the bot is @-mentioned,
-// then processes the todo list and replies to messages.
+// Package main_agent implements a QQ assistant agent driven by a todo queue:
+// producers (the NapCat client and the scheduler) push work items into the queue,
+// and the agent loop processes whatever it finds there.
 package main_agent
 
 import (
 	"context"
 	"fmt"
 	"log"
-	"strconv"
 	"sync"
+	"time"
 
 	"github.com/cloudwego/eino/adk"
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/components/tool"
 	"github.com/cloudwego/eino/compose"
 	"github.com/cloudwego/eino/schema"
-	"github.com/wdvxdr1123/ZeroBot/message"
 
-	"miss-raspberry-agent/internal/napcat"
 	"miss-raspberry-agent/internal/scheduler"
 	"miss-raspberry-agent/internal/tools/current_time"
 	"miss-raspberry-agent/internal/tools/qq_message"
@@ -37,11 +35,12 @@ const (
 	// maxHistoryMessages is the upper bound on the number of conversation history messages kept
 	// (roughly 10 turns); older entries are dropped beyond it to keep the context from growing unbounded.
 	maxHistoryMessages = 20
+	// queuePollInterval is how often the Run loop re-checks the todo queue while idle.
+	queuePollInterval = 200 * time.Millisecond
 )
 
-// MainAgent is a QQ assistant bound to a NapCat client.
+// MainAgent is a QQ assistant that consumes work from its own todo queue.
 type MainAgent struct {
-	client *napcat.NapcatClient
 	todo   *todo_list.Store
 	sched  *scheduler.Scheduler
 	runner *adk.Runner
@@ -53,18 +52,20 @@ type MainAgent struct {
 	source   scheduler.Source
 }
 
-// NewMainAgent builds the main_agent: it binds the napcat client and wires up the qq_message
-// send/history tools, todo_list, current_time, and schedule_task tools.
-func NewMainAgent(ctx context.Context, client *napcat.NapcatClient, chatModel model.BaseChatModel, todo *todo_list.Store) (*MainAgent, error) {
+// NewMainAgent builds the main_agent: it creates the agent's own todo queue and wires up the
+// qq_message send/history tools, todo_list, current_time, and schedule_task tools. The sender
+// and history arguments are narrow interfaces (implemented by the NapCat client) so the agent
+// is not coupled to a concrete transport.
+func NewMainAgent(ctx context.Context, chatModel model.BaseChatModel, sender qq_message.Sender, history qq_message.HistoryProvider) (*MainAgent, error) {
 	sched := scheduler.NewScheduler(scheduler.NewStore())
-	a := &MainAgent{client: client, todo: todo, sched: sched}
+	a := &MainAgent{todo: todo_list.NewStore(), sched: sched}
 
 	tools := []tool.BaseTool{
 		current_time.NewCurrentTimeTool(),
 		schedule_task.NewScheduleTaskTool(sched.Store(), a.currentSource),
-		qq_message.NewQQMessageSender(client),
-		qq_message.NewQQMessageGetter(client),
-		todo_list.NewTodoListTool(todo),
+		qq_message.NewQQMessageSender(sender),
+		qq_message.NewQQMessageGetter(history),
+		todo_list.NewTodoListTool(a.todo),
 	}
 
 	// Work around strict OpenAI-compatible providers (e.g. DeepSeek) validating tool message
@@ -91,72 +92,60 @@ func NewMainAgent(ctx context.Context, client *napcat.NapcatClient, chatModel mo
 	return a, nil
 }
 
-// Run listens for messages from the NapCat client; private messages always activate the agent,
-// while group messages do so only when the bot is @-mentioned. It also listens for scheduled-task
-// trigger events. It blocks until ctx is canceled or the client stops.
+// Queue returns the todo queue that producers push work into; it is also the queue the Run loop
+// polls.
+func (a *MainAgent) Queue() *todo_list.Store {
+	return a.todo
+}
+
+// Run polls the agent's todo queue until ctx is canceled: whenever the queue is non-empty it
+// drains it, and it keeps the scheduler running so scheduled-task firings are also enqueued.
 func (a *MainAgent) Run(ctx context.Context) {
 	schedCtx, cancelSched := context.WithCancel(ctx)
 	defer cancelSched()
 	go a.sched.Run(schedCtx)
+	go a.forwardScheduledFires(schedCtx)
 
+	// stalledVersion records the queue version when the previous drain ended with a non-empty
+	// list. A new drain only starts after the version moves (a new item arrived), so a list the
+	// model cannot clear is not retried on every poll tick.
+	var stalledVersion int64
+	for {
+		if ctx.Err() != nil {
+			log.Println("[main_agent] context canceled, stop listening")
+			return
+		}
+		if !a.todo.IsEmpty() && a.todo.Version() != stalledVersion {
+			a.setCurrentSourceFromQueue()
+			a.drainTodoList(ctx)
+			if !a.todo.IsEmpty() {
+				stalledVersion = a.todo.Version()
+			}
+		}
+		time.Sleep(queuePollInterval)
+	}
+}
+
+// forwardScheduledFires converts scheduler firing events into todo items so that, exactly like
+// NapCat messages, scheduled tasks enter the agent through the queue.
+func (a *MainAgent) forwardScheduledFires(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			log.Println("[main_agent] context canceled, stop listening")
 			return
-		case msg, ok := <-a.client.Incoming:
-			if !ok {
-				log.Println("[main_agent] napcat client has stopped")
-				return
-			}
-			if !shouldActivate(msg) {
-				log.Printf("[main_agent] group message does not @ the bot, not activating (sender=%d content=%s)", msg.UserID, msg.Content)
-				continue
-			}
-			a.activate(ctx, msg)
 		case task, ok := <-a.sched.Fires():
 			if !ok {
-				continue
+				return
 			}
-			a.activateScheduled(ctx, task)
+			a.enqueueScheduledTask(task)
 		}
 	}
 }
 
-// activate writes the received message into the todo list, then runs the agent; after each round
-// of replies it checks the todo list and rewakes the agent while non-empty, until the list is
-// cleared or the maximum rewake count is reached.
-func (a *MainAgent) activate(ctx context.Context, msg napcat.Message) {
-	log.Printf("[main_agent] received %s message: %s", describeSource(msg), msg.Content)
-
-	a.setCurrentSource(scheduler.Source{
-		Description: describeSource(msg),
-		TargetType:  msg.MessageType,
-		TargetID:    replyTargetID(msg),
-		UserID:      msg.UserID,
-	})
-	a.todo.Add(todo_list.Item{
-		Content:    msg.Content,
-		Source:     describeSource(msg),
-		TargetType: msg.MessageType,
-		TargetID:   replyTargetID(msg),
-		UserID:     msg.UserID,
-	})
-
-	a.drainTodoList(ctx)
-}
-
-// activateScheduled adds a scheduled task to the todo list as an item when it fires, then rewakes
-// the agent to handle it; the reply target reuses the message source captured when the task was created.
-func (a *MainAgent) activateScheduled(ctx context.Context, task scheduler.Task) {
+// enqueueScheduledTask pushes a fired scheduled task into the queue; the reply target is the
+// message source captured when the task was created.
+func (a *MainAgent) enqueueScheduledTask(task scheduler.Task) {
 	log.Printf("[main_agent] scheduled task fired: %s (%s, rule %s)", task.ID, task.Content, task.Schedule)
-
-	a.setCurrentSource(scheduler.Source{
-		Description: task.Source,
-		TargetType:  task.TargetType,
-		TargetID:    task.TargetID,
-		UserID:      task.UserID,
-	})
 	a.todo.Add(todo_list.Item{
 		Content:    fmt.Sprintf("[定时任务 %s] %s", task.Schedule, task.Content),
 		Source:     task.Source,
@@ -164,8 +153,6 @@ func (a *MainAgent) activateScheduled(ctx context.Context, task scheduler.Task) 
 		TargetID:   task.TargetID,
 		UserID:     task.UserID,
 	})
-
-	a.drainTodoList(ctx)
 }
 
 // drainTodoList runs one round of the agent and, if the todo list still has items, rewakes it
@@ -213,6 +200,22 @@ func (a *MainAgent) setCurrentSource(src scheduler.Source) {
 	a.sourceMu.Lock()
 	defer a.sourceMu.Unlock()
 	a.source = src
+}
+
+// setCurrentSourceFromQueue records the reply source of the newest pending item, mirroring the
+// previous behavior where the last activation trigger determined the default reply target.
+func (a *MainAgent) setCurrentSourceFromQueue() {
+	items := a.todo.List()
+	if len(items) == 0 {
+		return
+	}
+	last := items[len(items)-1]
+	a.setCurrentSource(scheduler.Source{
+		Description: last.Source,
+		TargetType:  last.TargetType,
+		TargetID:    last.TargetID,
+		UserID:      last.UserID,
+	})
 }
 
 // runOnce runs one round of the agent and consumes all events. The user message and the model
@@ -271,41 +274,6 @@ func (a *MainAgent) runOnce(ctx context.Context, prompt string) error {
 	return nil
 }
 
-// shouldActivate decides whether a message triggers the agent: private messages always activate it;
-// group messages do so only when the bot itself is @-mentioned.
-func shouldActivate(msg napcat.Message) bool {
-	if msg.MessageType != "group" {
-		return true
-	}
-	return isBotMentioned(msg)
-}
-
-// isBotMentioned checks whether a group message contains an at segment mentioning the bot itself.
-//
-// Note: when ZeroBot pre-processes a message event, it removes any at segment that mentions the
-// bot itself from Event.Message (unless KeepAtMeMessage is configured). Therefore we must parse
-// segments from Event.NativeMessage (the raw message field, not yet processed by ZeroBot) rather
-// than from the already-processed Event.Message, otherwise the @ mention would never be detected.
-func isBotMentioned(msg napcat.Message) bool {
-	if msg.RawEvent == nil {
-		return false
-	}
-	selfID := strconv.FormatInt(msg.RawEvent.SelfID, 10)
-
-	segs := message.ParseMessage(msg.RawEvent.NativeMessage)
-	if len(segs) == 0 {
-		// Fallback: when the caller constructs the Event directly and left NativeMessage empty,
-		// fall back to inspecting the already-processed message segments.
-		segs = msg.RawEvent.Message
-	}
-	for _, seg := range segs {
-		if seg.Type == "at" && seg.Data["qq"] == selfID {
-			return true
-		}
-	}
-	return false
-}
-
 // sanitizeHistory cleans up incomplete tool-call fragments in the history, avoiding a 400 from
 // strict providers (e.g. DeepSeek) when they validate the message sequence:
 //   - drop orphan tool messages that have no preceding assistant(tool_calls) to match them.
@@ -355,24 +323,4 @@ func trimHistory(messages []*schema.Message, max int) []*schema.Message {
 		return messages
 	}
 	return messages[len(messages)-max:]
-}
-
-// describeSource produces a human-readable description of the message source, for display in the
-// todo list.
-func describeSource(msg napcat.Message) string {
-	switch msg.MessageType {
-	case "group":
-		return fmt.Sprintf("群聊(群号=%d,发送者QQ=%d)", msg.GroupID, msg.UserID)
-	default:
-		return fmt.Sprintf("私聊(用户QQ=%d)", msg.UserID)
-	}
-}
-
-// replyTargetID returns the target_id to use when replying to a message: the group ID for group
-// chats and the user's QQ number for private chats.
-func replyTargetID(msg napcat.Message) int64 {
-	if msg.MessageType == "group" {
-		return msg.GroupID
-	}
-	return msg.UserID
 }

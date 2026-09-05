@@ -43,6 +43,20 @@ func TestStoreAddListComplete(t *testing.T) {
 	}
 }
 
+// TestVersionIncrementsOnAdd verifies that Version is monotonic and reflects every Add, which
+// polling consumers use to detect new queue items.
+func TestVersionIncrementsOnAdd(t *testing.T) {
+	store := todo_list.NewStore()
+	if v := store.Version(); v != 0 {
+		t.Fatalf("initial version = %d, want 0", v)
+	}
+	store.Add(todo_list.Item{Content: "one"})
+	store.Add(todo_list.Item{Content: "two"})
+	if v := store.Version(); v != 2 {
+		t.Fatalf("version after two adds = %d, want 2", v)
+	}
+}
+
 func TestTodoListToolActions(t *testing.T) {
 	store := todo_list.NewStore()
 

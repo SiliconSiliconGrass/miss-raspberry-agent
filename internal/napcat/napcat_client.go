@@ -12,6 +12,8 @@ import (
 	"github.com/tidwall/gjson"
 	zero "github.com/wdvxdr1123/ZeroBot"
 	"github.com/wdvxdr1123/ZeroBot/driver"
+
+	"miss-raspberry-agent/internal/tools/todo_list"
 )
 
 // Message is the struct used for internal communication.
@@ -40,10 +42,11 @@ type NapcatClient struct {
 	// Configuration.
 	config *NapcatClientConfig
 
-	// Message channels.
-	// Incoming: received messages (NapCat -> Agent)
+	// todoList is the queue that relevant incoming messages are pushed into; it belongs to the
+	// agent and is wired up before Start.
+	todoList *todo_list.Store
+
 	// Outgoing: messages to send (Agent -> NapCat)
-	Incoming chan Message
 	Outgoing chan Message
 
 	// Control.
@@ -71,10 +74,18 @@ func NewClient(cfg *NapcatClientConfig) *NapcatClient {
 
 	return &NapcatClient{
 		config:   cfg,
-		Incoming: make(chan Message, 100),
 		Outgoing: make(chan Message, 100),
 		done:     make(chan struct{}),
 	}
+}
+
+// SetTodoList configures the todo queue that relevant received messages (private chats and
+// group messages mentioning the bot) are pushed into. It must be called before Start so that
+// no qualifying message is dropped.
+func (c *NapcatClient) SetTodoList(todo *todo_list.Store) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.todoList = todo
 }
 
 // Start starts the client (non-blocking).
@@ -105,13 +116,8 @@ func (c *NapcatClient) Start() error {
 			RawEvent:    ctx.Event,
 		}
 
-		// Send to the Incoming channel without blocking.
-		select {
-		case c.Incoming <- msg:
-			log.Printf("[Napcat] received message: %s", msg.Content)
-		default:
-			log.Println("[Napcat] Incoming channel is full, dropping message")
-		}
+		// Route the message: relevant messages are queued for the agent to process.
+		c.HandleIncomingMessage(msg)
 	})
 
 	// Start the goroutine that processes Outgoing messages.
@@ -144,7 +150,6 @@ func (c *NapcatClient) Stop() {
 
 	c.running = false
 	close(c.done)
-	close(c.Incoming)
 	close(c.Outgoing)
 
 	log.Println("[Napcat] Client stopped")
@@ -299,10 +304,4 @@ func (c *NapcatClient) processOutgoing() {
 			log.Printf("[Napcat] message sent: %s", msg.Content)
 		}
 	}
-}
-
-// GetMessage gets a message (blocking; used by the Agent).
-func (c *NapcatClient) GetMessage() (Message, bool) {
-	msg, ok := <-c.Incoming
-	return msg, ok
 }

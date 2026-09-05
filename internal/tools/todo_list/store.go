@@ -85,6 +85,14 @@ func (s *Store) IsEmpty() bool {
 	return len(s.items) == 0
 }
 
+// Version returns the number of Add calls made so far. It is monotonic and lets a polling
+// consumer tell whether new items were pushed into the queue since it last looked.
+func (s *Store) Version() int64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.nextID
+}
+
 // Len returns the number of todos.
 func (s *Store) Len() int {
 	s.mu.RLock()

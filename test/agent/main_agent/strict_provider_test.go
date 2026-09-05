@@ -13,7 +13,6 @@ import (
 	einoopenai "github.com/cloudwego/eino-ext/components/model/openai"
 
 	"miss-raspberry-agent/internal/agent/main_agent"
-	"miss-raspberry-agent/internal/napcat"
 	"miss-raspberry-agent/internal/tools/todo_list"
 )
 
@@ -87,12 +86,11 @@ func TestMainAgentStrictProviderToolSequence(t *testing.T) {
 		t.Fatalf("NewChatModel: %v", err)
 	}
 
-	client := napcat.NewClient(nil)
-	todo := todo_list.NewStore()
-	agent, err := main_agent.NewMainAgent(ctx, client, chatModel, todo)
+	agent, err := main_agent.NewMainAgent(ctx, chatModel, stubSender{}, stubHistory{})
 	if err != nil {
 		t.Fatalf("NewMainAgent: %v", err)
 	}
+	queue := agent.Queue()
 
 	done := make(chan struct{})
 	go func() {
@@ -104,7 +102,13 @@ func TestMainAgentStrictProviderToolSequence(t *testing.T) {
 		<-done
 	}()
 
-	client.Incoming <- napcat.Message{MessageType: "private", UserID: 111, Content: "你好"}
+	queue.Add(todo_list.Item{
+		Content:    "你好",
+		Source:     "私聊(用户QQ=111)",
+		TargetType: "private",
+		TargetID:   111,
+		UserID:     111,
+	})
 	waitServerCalls(t, mock, 4)
 
 	mock.mu.Lock()

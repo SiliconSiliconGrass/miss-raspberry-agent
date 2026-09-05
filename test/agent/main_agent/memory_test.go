@@ -2,7 +2,6 @@ package main_agent_test
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"regexp"
 	"strings"
@@ -12,11 +11,8 @@ import (
 
 	"github.com/cloudwego/eino/components/model"
 	"github.com/cloudwego/eino/schema"
-	zero "github.com/wdvxdr1123/ZeroBot"
-	"github.com/wdvxdr1123/ZeroBot/message"
 
 	"miss-raspberry-agent/internal/agent/main_agent"
-	"miss-raspberry-agent/internal/napcat"
 	"miss-raspberry-agent/internal/tools/todo_list"
 )
 
@@ -55,6 +51,21 @@ func (f *memoryFakeModel) Stream(context.Context, []*schema.Message, ...model.Op
 	return nil, errors.New("stream not implemented")
 }
 
+func (f *memoryFakeModel) callCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.calls
+}
+
+func (f *memoryFakeModel) lastInput() []*schema.Message {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.messages) == 0 {
+		return nil
+	}
+	return f.messages[len(f.messages)-1]
+}
+
 func copyMessages(input []*schema.Message) []*schema.Message {
 	out := make([]*schema.Message, len(input))
 	for i, m := range input {
@@ -77,16 +88,17 @@ func extractItemID(input []*schema.Message) string {
 	return ""
 }
 
-func TestMainAgentKeepsConversationMemoryAcrossActivations(t *testing.T) {
+// TestMainAgentKeepsConversationMemoryAcrossQueueActivations verifies that each queue item is
+// processed and that later activations carry the conversation history of earlier ones.
+func TestMainAgentKeepsConversationMemoryAcrossQueueActivations(t *testing.T) {
 	fake := &memoryFakeModel{}
-	client := napcat.NewClient(nil)
-	todo := todo_list.NewStore()
 
 	ctx, cancel := context.WithCancel(context.Background())
-	agent, err := main_agent.NewMainAgent(ctx, client, fake, todo)
+	agent, err := main_agent.NewMainAgent(ctx, fake, stubSender{}, stubHistory{})
 	if err != nil {
 		t.Fatalf("NewMainAgent: %v", err)
 	}
+	queue := agent.Queue()
 
 	done := make(chan struct{})
 	go func() {
@@ -99,24 +111,27 @@ func TestMainAgentKeepsConversationMemoryAcrossActivations(t *testing.T) {
 	}()
 
 	// First round: a private message; the agent should complete the todo item.
-	client.Incoming <- napcat.Message{MessageType: "private", UserID: 111, Content: "第一条消息"}
+	queue.Add(todo_list.Item{
+		Content:    "第一条消息",
+		Source:     "私聊(用户QQ=111)",
+		TargetType: "private",
+		TargetID:   111,
+		UserID:     111,
+	})
 	waitModelCalls(t, fake, 2)
-	if !todo.IsEmpty() {
-		t.Fatalf("expected todo list to be cleared after first activation, got %d items", todo.Len())
+	if !queue.IsEmpty() {
+		t.Fatalf("expected todo list to be cleared after first activation, got %d items", queue.Len())
 	}
 
-	// Second round: a group message. The model should now see the conversation history from the first round.
-	client.Incoming <- napcat.Message{
-		MessageType: "group",
-		UserID:      222,
-		GroupID:     333,
-		Content:     "第二条消息",
-		RawEvent: &zero.Event{
-			SelfID:        100,
-			NativeMessage: json.RawMessage(`[{"type":"at","data":{"qq":"100"}},{"type":"text","data":{"text":"第二条消息"}}]`),
-			Message:       message.Message{{Type: "text", Data: map[string]string{"text": "第二条消息"}}},
-		},
-	}
+	// Second round: a group message. The model should now see the conversation history from the
+	// first round.
+	queue.Add(todo_list.Item{
+		Content:    "第二条消息",
+		Source:     "群聊(群号=333,发送者QQ=222)",
+		TargetType: "group",
+		TargetID:   333,
+		UserID:     222,
+	})
 	waitModelCalls(t, fake, 4)
 
 	lastInput := fake.lastInput()
@@ -137,21 +152,6 @@ func waitModelCalls(t *testing.T, fake *memoryFakeModel, want int) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-}
-
-func (f *memoryFakeModel) callCount() int {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.calls
-}
-
-func (f *memoryFakeModel) lastInput() []*schema.Message {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if len(f.messages) == 0 {
-		return nil
-	}
-	return f.messages[len(f.messages)-1]
 }
 
 func joinedContents(messages []*schema.Message) string {

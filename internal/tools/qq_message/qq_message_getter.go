@@ -182,11 +182,11 @@ func sortHistoryNewestFirst(messages []napcat.HistoryMessage) {
 }
 
 // NewQQMessageGetter constructs the "get QQ message history" tool.
-func NewQQMessageGetter(napcatClient *napcat.NapcatClient) tool.BaseTool {
+func NewQQMessageGetter(provider HistoryProvider) tool.BaseTool {
 	fn := func(ctx context.Context, in *QQMessageGetterInput) (*QQMessageGetterOutput, error) {
-		return GetMessageHistory(ctx, napcatClient, in)
+		return GetMessageHistory(ctx, provider, in)
 	}
-	tool, err := utils.InferTool(
+	t, err := utils.InferTool(
 		"qq_message_getter", // tool name, used by the LLM to invoke it
 		"获取指定QQ用户或群聊的文本消息历史：可按条数（count）或时间范围（start_time/end_time）获取，返回按时间倒序的消息列表",
 		fn,
@@ -194,5 +194,5 @@ func NewQQMessageGetter(napcatClient *napcat.NapcatClient) tool.BaseTool {
 	if err != nil {
 		log.Fatal(err)
 	}
-	return tool
+	return t
 }

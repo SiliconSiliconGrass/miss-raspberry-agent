@@ -21,14 +21,24 @@ type QQMessageSenderOutput struct {
 	Message string `json:"message"`
 }
 
-// SendMessage puts the message into the NapCat client's send queue; the client performs the actual sending.
-func SendMessage(ctx context.Context, client *napcat.NapcatClient, in *QQMessageSenderInput) (*QQMessageSenderOutput, error) {
+// Sender is the outgoing message sink used by the qq_message_sender tool.
+// It is implemented by *napcat.NapcatClient and can be faked in tests.
+type Sender interface {
+	SendMessage(userID int64, content string) bool
+	SendGroupMessage(groupID int64, content string) bool
+}
+
+var _ Sender = (*napcat.NapcatClient)(nil)
+
+// SendMessage puts the message into the sender's send queue; the underlying client performs
+// the actual sending.
+func SendMessage(ctx context.Context, sender Sender, in *QQMessageSenderInput) (*QQMessageSenderOutput, error) {
 	var ok bool
 	switch in.TargetType {
 	case "", "private":
-		ok = client.SendMessage(in.TargetId, in.Content)
+		ok = sender.SendMessage(in.TargetId, in.Content)
 	case "group":
-		ok = client.SendGroupMessage(in.TargetId, in.Content)
+		ok = sender.SendGroupMessage(in.TargetId, in.Content)
 	default:
 		return nil, fmt.Errorf("qq_message_sender: unknown target_type %q (expected private or group)", in.TargetType)
 	}
@@ -41,11 +51,12 @@ func SendMessage(ctx context.Context, client *napcat.NapcatClient, in *QQMessage
 	}, nil
 }
 
-func NewQQMessageSender(napcatClient *napcat.NapcatClient) tool.BaseTool {
+// NewQQMessageSender constructs the "send QQ message" tool.
+func NewQQMessageSender(sender Sender) tool.BaseTool {
 	fn := func(ctx context.Context, in *QQMessageSenderInput) (*QQMessageSenderOutput, error) {
-		return SendMessage(ctx, napcatClient, in)
+		return SendMessage(ctx, sender, in)
 	}
-	tool, err := utils.InferTool(
+	t, err := utils.InferTool(
 		"qq_message_sender", // tool name, used by the LLM to invoke it
 		"向指定QQ用户或QQ群发送一条文本消息", // tool desc, written for the LLM
 		fn,
@@ -53,5 +64,5 @@ func NewQQMessageSender(napcatClient *napcat.NapcatClient) tool.BaseTool {
 	if err != nil {
 		log.Fatal(err)
 	}
-	return tool
+	return t
 }
